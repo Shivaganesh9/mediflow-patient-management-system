@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MediFlow Comprehensive Codebase Audit</title>
+  <style>
+    :root { color-scheme: light; --ink: #17202a; --muted: #5b6875; --line: #d9e0e7; --accent: #086f83; --soft: #eef7f8; --critical: #9b2c2c; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: #f5f7f9; font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 42px 24px 72px; background: #fff; min-height: 100vh; }
+    h1 { margin: 0 0 8px; font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.1; letter-spacing: -0.03em; }
+    h2 { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--accent); }
+    h3 { margin-top: 30px; }
+    .meta { color: var(--muted); margin-bottom: 30px; }
+    .summary { padding: 22px 26px; background: var(--soft); border-left: 5px solid var(--accent); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+    .card { border: 1px solid var(--line); padding: 16px 18px; background: #fff; }
+    .card strong { display: block; color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; margin: 18px 0 26px; font-size: .94rem; }
+    th, td { text-align: left; vertical-align: top; border: 1px solid var(--line); padding: 10px 12px; }
+    th { background: #edf2f5; }
+    code { background: #eef1f3; padding: 2px 5px; border-radius: 3px; }
+    a { color: var(--accent); }
+    .priority { color: var(--critical); font-weight: 700; }
+    li { margin: 7px 0; }
+    footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); }
+    @media print { body { background: #fff; } main { padding: 0; } a { color: inherit; text-decoration: none; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>MediFlow Comprehensive Codebase Audit</h1>
+    <p class="meta">Audit date: 2026-08-09 | Scope: backend, frontend, Docker, database, infrastructure, and documentation</p>
+  </header>
+
+  <section class="summary">
+    <h2 style="border:0; margin-top:0; padding-top:0;">Executive Summary</h2>
+    <p>MediFlow is intended to be a patient-management platform for hospitals, clinics, and multi-provider care networks. Its planned shape is a Spring Boot microservice backend, React operations console, PostgreSQL per domain, Kafka events, service discovery, an API gateway, and cloud/container deployment.</p>
+    <p>The workspace is currently an early vertical slice plus architecture scaffolding rather than a production-ready platform.</p>
+    <ol>
+      <li>The backend has a compile-breaking auth identity mismatch: <code>BaseEntity</code> uses UUID while auth entities redeclare String IDs.</li>
+      <li>The API gateway has no routes, so the intended frontend-to-backend path is not connected.</li>
+      <li>The frontend is a static prototype with hard-coded patient data and no API or authentication integration.</li>
+      <li>Lab, medical-record, and pharmacy services are present but omitted from the root Maven reactor.</li>
+      <li>Database passwords, a fallback JWT secret, wildcard CORS, plaintext Kafka, and schema auto-update create security and operational risk.</li>
+    </ol>
+  </section>
+
+  <h2>1. Project Understanding and Architecture</h2>
+  <p>MediFlow is designed to coordinate patient registration, records, appointments, doctors, billing, notifications, analytics, authentication, and future lab, pharmacy, and medical-record workflows.</p>
+  <h3>Primary users</h3>
+  <div class="grid">
+    <div class="card"><strong>Clinical staff</strong>Search patients, review context, and coordinate care.</div>
+    <div class="card"><strong>Doctors and care teams</strong>Manage schedules, patient activity, and follow-up work.</div>
+    <div class="card"><strong>Administrators</strong>Register patients, manage providers, billing, and notifications.</div>
+    <div class="card"><strong>Platform administrators</strong>Manage access, configuration, health, and reporting.</div>
+  </div>
+  <h3>Entry points</h3>
+  <ul>
+    <li>Root Maven reactor: <a href="../pom.xml">pom.xml</a></li>
+    <li>API gateway on port 8080: <a href="../backend/api-gateway/src/main/resources/application.yml">gateway configuration</a></li>
+    <li>Auth API on port 8081: <a href="../backend/auth-service/src/main/java/com/mediflow/auth/controller/AuthController.java">AuthController</a></li>
+    <li>Domain APIs under <code>/api/v1/...</code>, including patient, doctor, appointment, billing, notification, and analytics controllers.</li>
+    <li>React/Vite console: <a href="../frontend/mediflow-ui/src/App.tsx">App.tsx</a></li>
+    <li>Local PostgreSQL and Kafka: <a href="../docker-compose.yml">docker-compose.yml</a></li>
+  </ul>
+  <h3>Technology stack</h3>
+  <table><thead><tr><th>Area</th><th>Technology</th><th>Evidence</th></tr></thead><tbody>
+    <tr><td>Backend</td><td>Java 21, Spring Boot 3.5.0, Spring Cloud 2024.0.0</td><td><a href="../pom.xml">Root POM</a></td></tr>
+    <tr><td>Security</td><td>Spring Security, BCrypt, JJWT, JWT access and refresh tokens</td><td><a href="../backend/auth-service/src/main/java/com/mediflow/auth/config/SecurityConfig.java">SecurityConfig</a></td></tr>
+    <tr><td>Persistence</td><td>Spring Data JPA, PostgreSQL, Flyway</td><td>Service application YAML files</td></tr>
+    <tr><td>Messaging</td><td>Apache Kafka</td><td>Appointment, notification, and patient configuration</td></tr>
+    <tr><td>Frontend</td><td>React 18, TypeScript 5.6, Vite 5</td><td><a href="../frontend/mediflow-ui/package.json">package.json</a></td></tr>
+    <tr><td>Local dependencies</td><td>PostgreSQL 16 and Bitnami Kafka 3.7</td><td><a href="../docker-compose.yml">Compose file</a></td></tr>
+  </tbody></table>
+
+  <h2>2. Setup and Health Check</h2>
+  <table><thead><tr><th>Priority</th><th>Finding</th><th>Action</th></tr></thead><tbody>
+    <tr><td class="priority">P0</td><td>Backend baseline does not compile because auth entities redeclare String IDs over UUID identity.</td><td>Use UUID consistently across entities, repositories, migrations, and tests.</td></tr>
+    <tr><td class="priority">P0</td><td>Gateway configuration contains <code>routes: []</code>.</td><td>Add explicit service routes, timeouts, filters, and route smoke tests.</td></tr>
+    <tr><td>P1</td><td>Compose starts only PostgreSQL and Kafka.</td><td>Add a runnable-stack profile, health checks, ordering, and service logs.</td></tr>
+    <tr><td>P1</td><td>No root <code>.env.example</code> was found.</td><td>Document database, Kafka, Eureka, JWT, and frontend API variables.</td></tr>
+    <tr><td>P1</td><td>Frontend Dockerfile runs Vite development mode.</td><td>Build static assets and serve them from a production image as non-root.</td></tr>
+    <tr><td>P1</td><td>Spring Boot plugin is only under Maven <code>pluginManagement</code>.</td><td>Apply it to runnable services and verify executable jar packaging.</td></tr>
+    <tr><td>P2</td><td>No Maven Wrapper or visible CI workflow.</td><td>Add reproducible tools and CI compile, test, and security gates.</td></tr>
+  </tbody></table>
+  <p><strong>Validation status:</strong> The Java 21 baseline failed before tests could run due to the auth identifier mismatch. This is a confirmed pre-existing compile blocker.</p>
+
+  <h2>3. Technical Debt, Bugs, and Risks</h2>
+  <h3>Correctness</h3>
+  <ul>
+    <li><strong>Auth identity conflict:</strong> <a href="../backend/common-library/src/main/java/com/mediflow/common/entity/BaseEntity.java">BaseEntity</a> defines UUID identity, while User, Role, and RefreshToken redeclare String IDs.</li>
+    <li><strong>Invalid dates return the wrong status:</strong> <a href="../backend/patient-service/src/main/java/com/mediflow/patient/service/PatientService.java">PatientService</a> calls <code>LocalDate.parse</code> directly; malformed input can become a generic 500 instead of a structured 400.</li>
+    <li><strong>Frontend actions are placeholders:</strong> <a href="../frontend/mediflow-ui/src/pages/PatientsPage.tsx">PatientsPage</a> renders hard-coded patients and non-functional Add patient actions.</li>
+    <li><strong>OpenAPI is incomplete:</strong> <a href="api/OpenAPI.yaml">docs/api/OpenAPI.yaml</a> is only a skeletal document, so client/server contract drift is likely.</li>
+  </ul>
+  <h3>Security</h3>
+  <ul>
+    <li>Committed database credential defaults exist in <a href="../docker-compose.yml">docker-compose.yml</a> and service YAML files.</li>
+    <li><a href="../backend/auth-service/src/main/resources/application.yml">Auth configuration</a> falls back to <code>change-me-in-production</code> for JWT signing.</li>
+    <li><a href="../backend/api-gateway/src/main/resources/application.yml">Gateway CORS</a> allows every origin, method, and header.</li>
+    <li>Multiple services use Hibernate <code>ddl-auto: update</code>; production should use versioned migrations and <code>validate</code>.</li>
+    <li>Kafka is configured with plaintext listeners for local development only; production needs TLS/SASL and ACLs.</li>
+    <li>Domain authorization needs explicit role and ownership checks for patient and billing data.</li>
+  </ul>
+  <h3>Reliability and performance</h3>
+  <ul>
+    <li>Patient retrieval uses unbounded <code>findAll()</code>; add pagination, filters, and bounded responses.</li>
+    <li>No visible idempotency, retry, dead-letter, timeout, circuit-breaker, or backpressure policy exists.</li>
+    <li>No executable health checks, readiness probes, resource limits, backup policy, or database pool policy is visible.</li>
+  </ul>
+
+  <h2>4. 10x Upgrade Blueprint</h2>
+  <div class="grid">
+    <div class="card"><strong>Secure care-operations workspace</strong>Connect the React console to typed OpenAPI clients, authentication, patient search, timelines, appointments, billing, RBAC, and audit history.</div>
+    <div class="card"><strong>Event-driven workflow automation</strong>Use Kafka with transactional outbox, versioned schemas, idempotent consumers, retries, dead-letter topics, and appointment reminders.</div>
+    <div class="card"><strong>Clinical interoperability</strong>Define canonical patient identity, consent, tenant boundaries, and HL7 FHIR-aligned mappings for patients, practitioners, appointments, observations, and medications.</div>
+    <div class="card"><strong>Operational intelligence</strong>Add Redis for safe read caching, search/read models, OpenTelemetry, SLO dashboards, queue-lag metrics, and privacy-aware analytics.</div>
+    <div class="card"><strong>Responsible AI assistant</strong>Support note summarization, communication drafts, duplicate detection, and no-show risk review with PHI minimization, citations, human approval, and model governance.</div>
+  </div>
+
+  <h2>5. Prioritized Three-Phase Action Plan</h2>
+  <h3>Phase 1: Quick Wins and Bug Fixes</h3>
+  <ol>
+    <li>Fix UUID/String auth identity mismatch.</li><li>Add request/date validation and consistent error responses.</li><li>Apply Spring Boot packaging and verify runnable jars.</li><li>Define the supported service set and quarantine unfinished modules.</li><li>Add <code>.env.example</code>; remove insecure production defaults.</li><li>Replace <code>ddl-auto: update</code> with Flyway migrations.</li><li>Add gateway routes and smoke tests.</li><li>Add Maven Wrapper, CI, and security scanning.</li><li>Replace frontend dev Docker image with a production build.</li><li>Document local startup, ports, seed data, and smoke tests.</li>
+  </ol>
+  <p><strong>Exit criteria:</strong> Root build and tests pass; Compose health checks pass; gateway routes auth and one domain flow; production profiles have no secret fallbacks.</p>
+  <h3>Phase 2: Core Architecture and UI Refactoring</h3>
+  <ol>
+    <li>Define service ownership, data boundaries, and versioned contracts.</li><li>Complete OpenAPI and generate typed frontend clients.</li><li>Add URL routing, route guards, session handling, loading, and error states.</li><li>Add pagination, filters, sorting, and validation to core workflows.</li><li>Add authorization tests and Testcontainers integration coverage.</li><li>Add structured logs, metrics, traces, request IDs, and readiness probes.</li><li>Create a service template and shared build convention.</li>
+  </ol>
+  <p><strong>Exit criteria:</strong> A staff user can authenticate and complete a patient-to-appointment workflow through the gateway with integration coverage and useful telemetry.</p>
+  <h3>Phase 3: High-Impact Feature Expansion</h3>
+  <ol>
+    <li>Implement outbox-backed Kafka workflows.</li><li>Add patient identity matching, consent, tenant boundaries, and FHIR-aligned adapters.</li><li>Add search/read models and performance caching.</li><li>Add operational analytics for access, throughput, no-shows, wait times, and billing.</li><li>Add governed AI assistance with human approval and PHI controls.</li><li>Complete lab, medical-record, and pharmacy domains only after contracts and operational ownership are defined.</li><li>Harden deployment with immutable images, secret references, autoscaling, backups, disaster recovery, and progressive delivery.</li>
+  </ol>
+  <p><strong>Exit criteria:</strong> Core workflows meet documented SLOs; events are traceable and replay-safe; interoperability is contract-tested; automation and AI have explicit safety controls.</p>
+
+  <h2>Recommended First 10 Tickets</h2>
+  <ol>
+    <li>Fix auth UUID identifier compilation failure.</li><li>Add Maven Wrapper and CI.</li><li>Verify executable Spring Boot jars.</li><li>Create <code>.env.example</code> and remove insecure defaults.</li><li>Add gateway routes and smoke tests.</li><li>Add consistent request validation and error responses.</li><li>Replace schema auto-update with migrations.</li><li>Add frontend API client and authentication session handling.</li><li>Replace hard-coded patient data with a paginated API flow.</li><li>Add Testcontainers smoke coverage for auth, gateway, and patient service.</li>
+  </ol>
+
+  <footer>Full Markdown source: <a href="comprehensive-codebase-audit.md">comprehensive-codebase-audit.md</a></footer>
+</main>
+</body>
+</html>

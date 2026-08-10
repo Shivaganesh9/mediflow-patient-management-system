@@ -1,0 +1,29 @@
+﻿node_modules/
+dist/
+.vscode/
+.env
+*.log
+
+# Java / Maven
+target/
+*.class
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# IntelliJ
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# Node
+node_modules/
+npm-debug.log*

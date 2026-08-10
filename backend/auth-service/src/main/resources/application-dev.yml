@@ -1,0 +1,12 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/mediflow_auth_db
+    username: postgres
+    password: ${DB_PASSWORD}
+  jpa:
+    show-sql: true
+
+logging:
+  level:
+    root: INFO
+    org.hibernate.SQL: DEBUG
