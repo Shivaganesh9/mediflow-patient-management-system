@@ -1,0 +1,20 @@
+ALTER TABLE invoices ADD COLUMN appointment_id UUID;
+ALTER TABLE invoices ADD COLUMN invoice_number VARCHAR(50);
+ALTER TABLE invoices ADD COLUMN subtotal NUMERIC(19,2) NOT NULL DEFAULT 0;
+ALTER TABLE invoices ADD COLUMN tax_rate NUMERIC(5,2) NOT NULL DEFAULT 0;
+ALTER TABLE invoices ADD COLUMN tax_amount NUMERIC(19,2) NOT NULL DEFAULT 0;
+ALTER TABLE invoices ADD COLUMN discount NUMERIC(19,2) NOT NULL DEFAULT 0;
+ALTER TABLE invoices ADD COLUMN total_amount NUMERIC(19,2) NOT NULL DEFAULT 0;
+ALTER TABLE invoices ADD COLUMN paid_amount NUMERIC(19,2) NOT NULL DEFAULT 0;
+ALTER TABLE invoices ADD COLUMN due_date DATE;
+ALTER TABLE invoices ADD COLUMN issued_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE invoices ADD COLUMN paid_at TIMESTAMP;
+ALTER TABLE invoices ADD COLUMN cancelled_at TIMESTAMP;
+ALTER TABLE invoices ADD COLUMN notes VARCHAR(1000);
+ALTER TABLE invoices ADD COLUMN version BIGINT;
+ALTER TABLE invoices DROP COLUMN amount;
+ALTER TABLE invoices DROP COLUMN description;
+
+CREATE INDEX idx_invoices_status ON invoices (status);
+CREATE INDEX idx_invoices_appointment_id ON invoices (appointment_id);
+CREATE UNIQUE INDEX idx_invoices_invoice_number ON invoices (invoice_number);
