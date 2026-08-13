@@ -7,6 +7,8 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Data;
 
+import java.util.UUID;
+
 @Data
 public class CreateDoctorRequest {
 
@@ -37,4 +39,6 @@ public class CreateDoctorRequest {
     @NotNull
     @DecimalMin(value = "0.0", inclusive = true)
     private java.math.BigDecimal consultationFee;
+
+    private UUID userId;
 }

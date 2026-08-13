@@ -15,6 +15,8 @@ import java.util.UUID;
 public interface PatientRepository extends JpaRepository<Patient, UUID> {
     Optional<Patient> findByPatientId(UUID patientId);
     Optional<Patient> findByPatientIdAndDeletedAtIsNull(UUID patientId);
+    boolean existsByPatientId(UUID patientId);
+    boolean existsByPatientIdAndDeletedAtIsNull(UUID patientId);
     boolean existsByEmailAndDeletedAtIsNull(String email);
     boolean existsByEmailAndPatientIdNotAndDeletedAtIsNull(String email, UUID patientId);
 

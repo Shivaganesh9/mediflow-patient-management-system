@@ -16,10 +16,13 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private static final String UID_CLAIM = "uid";
 
     private final JwtProvider jwtProvider;
 
@@ -38,8 +41,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                 .map(String::valueOf)
                                 .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
                                 .toList();
+
+                AuthenticatedUser principal =
+                        new AuthenticatedUser(username, extractUserId(claims), extractRoles(roles));
+
                 UsernamePasswordAuthenticationToken authentication =
-                    new UsernamePasswordAuthenticationToken(username, null, authorities);
+                        new UsernamePasswordAuthenticationToken(principal, null, authorities);
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (RuntimeException ignored) {
@@ -47,5 +54,29 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         }
         filterChain.doFilter(request, response);
+    }
+
+    private UUID extractUserId(Claims claims) {
+        Object uid = claims.get(UID_CLAIM);
+        if (uid != null) {
+            try {
+                return UUID.fromString(String.valueOf(uid));
+            } catch (IllegalArgumentException ignored) {
+                // fall through to subject-based resolution
+            }
+        }
+        String subject = claims.getSubject();
+        if (subject != null) {
+            try {
+                return UUID.fromString(subject);
+            } catch (IllegalArgumentException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private List<String> extractRoles(List<?> roles) {
+        return roles == null ? List.of() : roles.stream().map(String::valueOf).toList();
     }
 }

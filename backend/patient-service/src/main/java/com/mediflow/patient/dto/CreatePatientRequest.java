@@ -5,6 +5,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import lombok.Data;
 
+import java.util.UUID;
+
 @Data
 public class CreatePatientRequest {
     @NotBlank
@@ -28,4 +30,6 @@ public class CreatePatientRequest {
     private String emergencyContactPhone;
     private String insuranceProvider;
     private String insuranceMemberId;
+
+    private UUID userId;
 }

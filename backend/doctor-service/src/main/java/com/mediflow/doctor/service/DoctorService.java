@@ -6,14 +6,15 @@ import com.mediflow.doctor.dto.DoctorResponse;
 import com.mediflow.doctor.entity.Doctor;
 import com.mediflow.doctor.mapper.DoctorMapper;
 import com.mediflow.doctor.repository.DoctorRepository;
+import com.mediflow.doctor.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -23,13 +24,23 @@ public class DoctorService {
 
     private final DoctorRepository doctorRepository;
     private final DoctorMapper doctorMapper;
+    private final CurrentUser currentUser;
 
     @Transactional
     public Doctor createDoctor(CreateDoctorRequest request) {
         if (doctorRepository.existsByEmail(request.getEmail())) {
             throw new IllegalArgumentException("A doctor with this email already exists");
         }
-        Doctor doctor = doctorRepository.save(doctorMapper.toEntity(request));
+
+        UUID doctorId = resolveDoctorIdentity(request.getUserId());
+        if (doctorRepository.existsByDoctorId(doctorId)) {
+            throw new IllegalArgumentException("A doctor profile already exists for this user");
+        }
+
+        Doctor doctor = doctorMapper.toEntity(request);
+        doctor.setDoctorId(doctorId);
+        doctor.setCreatedBy(currentUser.currentUsername());
+        doctor = doctorRepository.save(doctor);
         log.info("Created doctor with id {}", doctor.getDoctorId());
         return doctor;
     }
@@ -39,8 +50,10 @@ public class DoctorService {
     }
 
     public Doctor getDoctor(UUID doctorId) {
-        return doctorRepository.findByDoctorId(doctorId)
+        Doctor doctor = doctorRepository.findByDoctorId(doctorId)
                 .orElseThrow(() -> new ResourceNotFoundException("Doctor not found with id: " + doctorId));
+        assertDoctorProfileAccess(doctorId);
+        return doctor;
     }
 
     @Transactional
@@ -53,5 +66,39 @@ public class DoctorService {
         Doctor updatedDoctor = doctorRepository.save(doctor);
         log.info("Updated doctor with id {}", doctorId);
         return updatedDoctor;
+    }
+
+    /**
+     * Resolves the Auth user identity to be assigned as the doctor business id.
+     * A doctor may only create their own profile; other roles must explicitly
+     * identify the target Auth user rather than using their own uid.
+     */
+    private UUID resolveDoctorIdentity(UUID requestedUserId) {
+        if (currentUser.hasRole("DOCTOR")) {
+            UUID selfId = currentUser.requireCurrentUserId();
+            if (requestedUserId != null && !requestedUserId.equals(selfId)) {
+                throw new AccessDeniedException("Doctors can only create their own doctor profile");
+            }
+            return selfId;
+        }
+        if (requestedUserId == null) {
+            throw new IllegalArgumentException("userId is required to associate the doctor profile with an Auth user");
+        }
+        return requestedUserId;
+    }
+
+    /**
+     * Enforces profile ownership for doctors: a doctor may only access their
+     * own profile (JWT uid == doctorId). Admin and staff roles retain access.
+     * Doctor discovery/search is unaffected because it never reads a specific
+     * profile by id.
+     */
+    private void assertDoctorProfileAccess(UUID doctorId) {
+        if (currentUser.hasRole("DOCTOR")) {
+            UUID selfId = currentUser.requireCurrentUserId();
+            if (!doctorId.equals(selfId)) {
+                throw new AccessDeniedException("Doctors can only access their own profile");
+            }
+        }
     }
 }
