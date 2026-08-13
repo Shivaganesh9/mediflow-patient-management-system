@@ -10,6 +10,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.List;
+import java.util.UUID;
 
 @Component
 public class JwtProvider {
@@ -23,11 +24,12 @@ public class JwtProvider {
     @Value("${jwt.refresh-expiration}")
     private long refreshExpiration;
 
-    public String generateAccessToken(String username, List<String> roles) {
+    public String generateAccessToken(String username, UUID userId, List<String> roles) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + jwtExpiration);
         return Jwts.builder()
                 .subject(username)
+                .claim("uid", userId)
                 .claim("roles", roles)
                 .issuedAt(now)
                 .expiration(expiry)

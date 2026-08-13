@@ -62,7 +62,7 @@ public class AuthServiceImpl implements AuthService {
                 .build();
 
         user = userRepository.save(user);
-        String accessToken = jwtProvider.generateAccessToken(user.getUsername(), user.getRoles().stream().map(Role::getName).toList());
+        String accessToken = jwtProvider.generateAccessToken(user.getUsername(), user.getId(), user.getRoles().stream().map(Role::getName).toList());
         String refreshToken = jwtProvider.generateRefreshToken(user.getUsername());
         saveRefreshToken(user, refreshToken);
 
@@ -87,7 +87,7 @@ public class AuthServiceImpl implements AuthService {
                 .or(() -> userRepository.findByEmail(request.getUsernameOrEmail()))
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        String accessToken = jwtProvider.generateAccessToken(user.getUsername(), user.getRoles().stream().map(Role::getName).toList());
+        String accessToken = jwtProvider.generateAccessToken(user.getUsername(), user.getId(), user.getRoles().stream().map(Role::getName).toList());
         String refreshToken = jwtProvider.generateRefreshToken(user.getUsername());
         saveRefreshToken(user, refreshToken);
 
@@ -112,7 +112,7 @@ public class AuthServiceImpl implements AuthService {
         }
 
         User user = refreshToken.getUser();
-        String accessToken = jwtProvider.generateAccessToken(user.getUsername(), user.getRoles().stream().map(Role::getName).toList());
+        String accessToken = jwtProvider.generateAccessToken(user.getUsername(), user.getId(), user.getRoles().stream().map(Role::getName).toList());
         String newRefreshToken = jwtProvider.generateRefreshToken(user.getUsername());
         refreshToken.setRevoked(true);
         refreshTokenRepository.save(refreshToken);

@@ -84,7 +84,7 @@ class AuthServiceImplTest {
                 .status(AccountStatus.ACTIVE)
                 .roles(Set.of(Role.builder().name("PATIENT").build()))
                 .build());
-        when(jwtProvider.generateAccessToken(anyString(), anyList())).thenReturn("access-token");
+        when(jwtProvider.generateAccessToken(anyString(), any(UUID.class), anyList())).thenReturn("access-token");
         when(jwtProvider.generateRefreshToken(anyString())).thenReturn("refresh-token");
 
         authService.register(request);
