@@ -311,3 +311,28 @@ Introduce AI only as a controlled assistant, not an autonomous clinical decision
 ## Final Assessment
 
 MediFlow has a sensible domain direction and a useful initial service decomposition, but the workspace currently has a large gap between intended architecture and executable capability. The highest-return move is not to add more services immediately. It is to make the existing slice buildable, secure, observable, and usable end to end. Once one workflow is production-shaped, the same conventions can be applied to appointments, billing, notifications, and the unfinished domains without multiplying today\'s inconsistencies.
+
+---
+
+## Post-Audit Reconciliation (2026-08-13)
+
+> The audit above is dated 2026-08-09 and describes the workspace at that point. The items below record which audit findings have since been resolved against the current codebase. The audit's recommendations remain valid as a roadmap.
+
+### Resolved since the audit
+- **P0 auth identity mismatch:** auth entities now use the UUID identity model consistently with `BaseEntity`; the reactor compiles and tests pass.
+- **P0 gateway routes empty:** the gateway now defines routes for auth, patient, appointment, medical-record, doctor, billing, notification, and analytics with CORS.
+- **P0 module omissions:** `medical-record-service` is now a full implementation in the root reactor. `lab-service`/`pharmacy-service` remain scaffolds, intentionally excluded.
+- **P1 `.env.example`:** added with masked/required variables; `JWT_SECRET` and `DB_PASSWORD` have no defaults (fail fast).
+- **P1 migrations:** every active service uses Flyway migrations with `ddl-auto: validate` (no `update`).
+- **P1 auth propagation:** per-service JWT filters enforce authentication; RBAC endpoint rules and resource-ownership checks (patient/doctor/medical-record) enforce authorization.
+- **P1 testcontainers:** medical-record-service integration tests run against Testcontainers PostgreSQL 16; other services use H2 (PostgreSQL mode).
+- **P1 date validation:** `@DateTimeFormat`/typed DTOs and a `DateTimeParseException → 400` mapping are handled by `GlobalExceptionHandler`.
+- **Doctor, billing, notification, analytics:** now implemented domains (not scaffolds); appointment service has conflict detection and event publishing.
+
+### Still outstanding (unchanged)
+- Frontend not API-connected (prototype shell; no auth, routing, or API client).
+- No Kafka consumers, outbox, DLQs, or retry policy (producers only).
+- No service registry/config server; Eureka configured but no server in repo.
+- No production deployment assets, monitoring stack, CI/CD, or rate limiting.
+- Notification and analytics services are unauthenticated (no Spring Security).
+- Admin/staff-created patient/doctor profiles do not synchronously validate the referenced Auth user.

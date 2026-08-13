@@ -473,3 +473,29 @@ MediFlow is a multi-service healthcare platform being built as a Java/Spring Boo
 
 ## Resume Prompt
 Continue building the MediFlow Patient Management System from the current scaffolded backend foundation. Use the existing patterns from auth-service, patient-service, and appointment-service. Implement the next logical service work in this order: doctor-service, billing-service, notification-service, analytics-service, and API gateway routing. Do not add lab-service or pharmacy-service. Reuse the shared common library, follow the existing Spring Boot + Maven structure, preserve the current architecture, and verify by running Maven builds after each major step. Keep the work consistent with the project handoff summary and avoid breaking the shared foundation.
+
+---
+
+## 24. Current State Update (2026-08-13)
+
+> The sections above are the original 2026-07-08 handoff. Since then the backend has been substantially implemented. This section reconciles the handoff with the current codebase.
+
+### What changed
+- **Doctor service:** fully implemented — profiles (create/search/get/update), availability, and leaves; ownership enforced (DOCTOR only own profile).
+- **Medical record service:** fully implemented and added to the Maven reactor (port 8091) — record CRUD + search, `recordType`, doctor/patient scoped access via `AccessControlService`, `medical-record.*.v1` events.
+- **Billing service:** fully implemented — invoices with line items/tax/discount/totals, payments, refunds, cancel, `invoice.*.v1` / `payment.*.v1` events.
+- **Appointment service:** conflict detection (time-range + overlap), status lifecycle (SCHEDULED/CONFIRMED reschedulable), `appointment.*.v1` events.
+- **Patient service:** soft-delete + 409 on recreating a soft-deleted profile; ownership enforcement (PATIENT only own profile).
+- **Security enforced across services:** per-service JWT filters (HS256, `sub`/`uid`/`roles` claims), role-based endpoint rules, resource-ownership checks (patient/doctor/medical-record).
+- **Migrations:** every active service now has Flyway migrations (V1–V3) with `ddl-auto: validate`.
+- **Gateway:** routes configured in `application.yml` (direct URLs, env-overridable) with global CORS.
+- **Auth:** roles seeded (PATIENT/DOCTOR/ADMIN); refresh-token rotation; `/me`, `/logout`.
+- **Tests:** unit + controller-security + integration (H2 PostgreSQL mode; Testcontainers for medical-record-service).
+- **Frontend:** still a prototype shell (no API client/auth/routing).
+
+### Still deferred (unchanged)
+- Kafka consumers (producers only), lab-service/pharmacy-service scaffolds, service registry/config server, production deployment assets.
+- Known limitation: admin/staff-created patient/doctor profiles accept a `userId` without synchronous validation of the Auth user (see `docs/security.md`).
+
+### Accurate references
+For current, code-verified documentation see `docs/architecture.md`, `docs/security.md`, `docs/api-design.md`, `docs/database-design.md`, `docs/kafka-events.md`, `docs/microservices.md`, `docs/features.md`.

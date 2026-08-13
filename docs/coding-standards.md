@@ -1,29 +1,33 @@
-# Coding Standards
+# MediFlow Coding Standards
 
-## General Principles
-- Write clear, maintainable, and testable code.
-- Favor readability over cleverness.
-- Keep services focused on a single business capability.
-- Follow language-specific conventions and repository standards.
+*Status: reflects the implemented codebase (2026-08-13).*
 
-## Backend Standards
-- Use Java 21 and Spring Boot 3 conventions.
-- Prefer dependency injection and interface-based abstractions.
-- Apply layered architecture: controller, service, repository, domain.
-- Use consistent exception handling and response envelopes.
+## Backend (Java 21, Spring Boot 3.5)
 
-## Frontend Standards
-- Use TypeScript strict mode.
-- Prefer functional components and hooks.
-- Keep components small and reusable.
-- Centralize API calls and shared constants.
+- **Layered architecture per service:** `controller / service / repository / entity`, plus `dto`, `mapper`, `security` packages. Controllers are thin; business rules live in services.
+- **Shared library:** reuse `common-library` for `BaseEntity`, `ApiResponse` envelope, `PagedResponse`, `GlobalExceptionHandler`, `ConflictException`/`ResourceNotFoundException`, `DomainEvent`, enums (`UserRole`, `AccountStatus`), constants, utilities. Do not duplicate these per service.
+- **Responses:** every controller returns `ApiResponse.success(data, message)`; create endpoints use `@ResponseStatus(HttpStatus.CREATED)`. Errors are mapped centrally by `GlobalExceptionHandler` (404/409/400/403).
+- **Validation:** Bean Validation annotations on request DTOs (`@Valid` in controllers); enums stored as strings (`@Enumerated(EnumType.STRING)`); monetary values as `BigDecimal`.
+- **Persistence:** entities extend `BaseEntity` (UUID `id`, audit columns, soft delete `deleted_at`). Business objects expose an immutable, unique UUID business id (`patientId`, `doctorId`, ...). Use `@Version` for optimistic locking. Query by business id, filter soft-deleted via `deleted_at IS NULL` predicates.
+- **Migrations:** all schema changes are Flyway migrations (`V{n}__*.sql`) under `src/main/resources/db/migration/`. Never rely on Hibernate DDL (`ddl-auto: validate`).
+- **Security:** per-service `SecurityConfig` with stateless sessions, CORS from `cors.allowed-origins`, and a local `JwtAuthenticationFilter` + `JwtProvider` (HS256, `JWT_SECRET`). Ownership rules live in services/`CurrentUser`/`AccessControlService`, not controllers.
+- **Kafka:** publish events via a per-service `*EventPublisher` component; use the `{domain}.{event}.v1` topic convention and the envelope `eventId/eventType/occurredAt/producerService/aggregateId/payload`.
+- **Conventions:** Lombok (`@RequiredArgsConstructor`, `@Slf4j`, builders), MapStruct mappers, `java.time` types, `@Transactional` on service methods, immutable DTO records where sensible.
+- **No comments unless needed**; prefer self-documenting code.
 
-## Testing Standards
-- Unit tests for domain and service logic.
-- Integration tests for API and persistence layers.
-- Contract tests for inter-service communication.
+## Frontend (React 18 + TypeScript strict + Vite 5)
 
-## DevOps Standards
-- Containerize all services.
-- Keep configuration externalized.
-- Use CI/CD pipelines for build, test, and deployment validation.
+- Functional components with hooks; strict TS.
+- Centralize shared UI in `components/`; one page per domain under `pages/`.
+- No lint/test scripts configured; `npm run build` runs `tsc -b && vite build`.
+
+## Testing
+
+- Service-layer unit tests with Mockito + JUnit 5.
+- Controller security tests verifying role/ownership rules (MockMvc + signed JWTs).
+- Integration tests: H2 (PostgreSQL mode, `create-drop`, Flyway off) for most services; Testcontainers PostgreSQL 16 for medical-record-service (`@DisabledWithoutDocker`).
+- Command: `mvn -pl backend/<service> test`.
+
+## Git
+
+- Default branch `main`, remote `origin`. Do not auto-commit/push; follow AGENTS.md working rules.

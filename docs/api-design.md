@@ -1,322 +1,99 @@
-# REST API Design for MediFlow
+# MediFlow REST API
 
-## 1. API Design Principles
-The platform uses RESTful APIs for synchronous interactions and Kafka for asynchronous business events. All APIs should be versioned, documented, secured, and consistent in request/response structure.
+*Status: reflects the implemented codebase (2026-08-13).*
 
-## 2. Global Conventions
-- Base path format: /api/v1/{resource}
-- Payload format: JSON
-- Authentication: JWT bearer token
-- Authorization: role-based access control
-- Response format:
-  - Success: { success: true, data: ..., meta: ... }
-  - Error: { success: false, error: { code, message, details, traceId } }
-- Pagination: page, size, sort, direction
-- Filtering: query parameters
+## 1. Conventions
 
-## 3. Common Error Codes
-- INVALID_REQUEST
-- UNAUTHORIZED
-- FORBIDDEN
-- NOT_FOUND
-- CONFLICT
-- VALIDATION_FAILED
-- RATE_LIMITED
-- INTERNAL_SERVER_ERROR
+- Base path: `/api/v1/{resource}`. JSON payloads. Versioned paths only (no headers-based versioning).
+- Response envelope (`common-library` `ApiResponse`): `{ success, message, data, errors, timestamp }`; `errors` omitted when null.
+- Pagination via Spring Data `Pageable`: params `page`, `size`, `sort`; default size 20 everywhere (patient/doctor sort `lastName`, appointment sort `startTime`, medical-record sort `encounterDate`, invoice sort `issuedAt`).
+- All responses wrapped in `ApiResponse.success(...)`; create endpoints return HTTP 201.
+- Error mapping (`GlobalExceptionHandler`): `ResourceNotFoundException` → 404; `ConflictException` → 409; `IllegalArgumentException` → 400; `DateTimeParseException` → 400; `MethodArgumentNotValidException` / `ConstraintViolationException` → 400; `AccessDeniedException` → 403.
 
-## 4. API Catalog by Service
+## 2. Auth Service (8081) — `/api/v1/auth`
 
-### 4.1 Auth Service
+| Method & Path | Auth | Description |
+|---|---|---|
+| POST `/register` | Public | Create user (default role PATIENT), returns access + refresh token. 400 on duplicate username/email |
+| POST `/login` | Public | `usernameOrEmail` + `password`; returns token pair |
+| POST `/refresh` | Public | Rotate refresh token (old revoked) |
+| POST `/logout` | JWT | Delete all refresh tokens for user |
+| GET `/me` | JWT | Current user profile (id, username, email, fullName, phone, status, roles) |
 
-#### POST /api/v1/auth/register
-- Purpose: Register a new user account.
-- Authentication: None
-- Request body: email, password, fullName, phone, role, tenantId(optional)
-- Response: created user summary and access token
-- Validation rules:
-  - email must be valid
-  - password must meet strength policy
-  - role must exist
-- Error codes: VALIDATION_FAILED, CONFLICT
+## 3. Patient Service (8083) — `/api/v1/patients`
 
-#### POST /api/v1/auth/login
-- Purpose: Authenticate a user.
-- Authentication: None
-- Request body: email, password
-- Response: accessToken, refreshToken, expiresIn, user profile
-- Validation rules:
-  - credentials must be present
-- Error codes: UNAUTHORIZED, VALIDATION_FAILED
+| Method & Path | Auth (role) | Description |
+|---|---|---|
+| POST `` | ADMIN/PATIENT/DOCTOR/STAFF | Create profile; 400 if email exists; 400 if patient business id exists; **409** if a soft-deleted profile holds the id |
+| GET `` | authenticated | Search (q/search params, pageable) |
+| GET `/{patientId}` | authenticated (ownership enforced) | Get profile; 404 if not found or soft-deleted |
+| PUT `/{patientId}` | ADMIN/DOCTOR/STAFF | Update profile; 400 if email taken by another |
+| DELETE `/{patientId}` | ADMIN | Soft delete |
 
-#### POST /api/v1/auth/refresh
-- Purpose: Refresh an expired access token.
-- Authentication: Refresh token
-- Request body: refreshToken
-- Response: new access token and refresh token
-- Error codes: UNAUTHORIZED, INVALID_REQUEST
+## 4. Doctor Service (8085) — `/api/v1/doctors`
 
-#### GET /api/v1/auth/me
-- Purpose: Retrieve current authenticated user.
-- Authentication: JWT
-- Response: user profile and roles
-- Error codes: UNAUTHORIZED, NOT_FOUND
+| Method & Path | Auth (role) | Description |
+|---|---|---|
+| POST `` | ADMIN/STAFF/DOCTOR | Create profile; 400 on duplicate email or duplicate business id; DOCTOR forced to own uid |
+| GET `` | authenticated | Search by `search`, `department`, pageable |
+| GET `/{doctorId}` | authenticated (ownership enforced) | Get profile; 404 if missing; DOCTOR only own |
+| PUT `/{doctorId}` | ADMIN/STAFF/DOCTOR | Update profile; 400 if email taken by another |
+| POST `/{doctorId}/availability` | ADMIN/STAFF/DOCTOR | Add availability slot |
+| GET `/{doctorId}/availability` | authenticated | List availability |
+| POST `/{doctorId}/leaves` | ADMIN/STAFF/DOCTOR | Add leave period |
+| GET `/{doctorId}/leaves` | authenticated | List leaves |
 
-#### POST /api/v1/auth/logout
-- Purpose: Invalidate current session tokens.
-- Authentication: JWT
-- Response: success confirmation
-- Error codes: UNAUTHORIZED
+## 5. Appointment Service (8084) — `/api/v1/appointments`
 
-### 4.2 Patient Service
+| Method & Path | Auth | Description |
+|---|---|---|
+| POST `` | authenticated | Create (status SCHEDULED); 400 if `endTime <= startTime` or time overlaps patient/doctor |
+| GET `` | authenticated | Filter `status`, `patientId`, `doctorId`, `fromTime`, `toTime`, pageable |
+| GET `/{appointmentId}` | authenticated | Get by business id; 404 if missing |
+| PUT `/{appointmentId}` | authenticated | Reschedule; only when status SCHEDULED/CONFIRMED; overlap-checked excluding self |
+| PATCH `/{appointmentId}/cancel` | authenticated | Cancel; only when status SCHEDULED/CONFIRMED |
 
-#### POST /api/v1/patients
-- Purpose: Create a new patient profile.
-- Authentication: JWT
-- Request body: personal details, contact info, identifiers, emergency contact
-- Response: created patient profile
-- Validation rules:
-  - required identifiers and contact information
-  - date of birth must be valid
-- Error codes: VALIDATION_FAILED, CONFLICT, FORBIDDEN
+## 6. Medical Record Service (8091) — `/api/v1/medical-records`
 
-#### GET /api/v1/patients/{id}
-- Purpose: Retrieve a patient by ID.
-- Authentication: JWT
-- Response: patient profile with associated contacts and identifiers
-- Error codes: NOT_FOUND, UNAUTHORIZED
+| Method & Path | Auth (role) | Description |
+|---|---|---|
+| POST `` | ADMIN/DOCTOR | Create (recordType defaults CONSULTATION); doctor forced to own uid unless admin |
+| GET `` | authenticated (scoped) | Filter `patientId`, `doctorId`, `recordType`, `fromDate`, `toDate`; patient forced to own patientId, doctor forced to own doctorId |
+| GET `/{recordId}` | authenticated (ownership) | Read; patient only own patientId, doctor only own doctorId, admin any |
+| PUT `/{recordId}` | ADMIN/DOCTOR | Update; write requires admin or owning doctor |
 
-#### PUT /api/v1/patients/{id}
-- Purpose: Update patient profile.
-- Authentication: JWT
-- Request body: updatable patient fields
-- Response: updated patient profile
-- Validation rules:
-  - patient must exist
-  - only authorized users may edit
-- Error codes: VALIDATION_FAILED, NOT_FOUND, FORBIDDEN
+## 7. Billing Service (8087) — `/api/v1/invoices` and `/api/v1/payments`
 
-#### DELETE /api/v1/patients/{id}
-- Purpose: Soft delete a patient profile.
-- Authentication: JWT
-- Response: success confirmation
-- Error codes: NOT_FOUND, FORBIDDEN
+| Method & Path | Auth (role) | Description |
+|---|---|---|
+| POST `/api/v1/invoices` | ADMIN/BILLING_STAFF | Generate invoice (PENDING, computed amounts, `INV-...` number); 400 if total <= 0 |
+| GET `/api/v1/invoices` | authenticated | Filter `status`, `patientId`, `appointmentId`, pageable |
+| GET `/api/v1/invoices/{invoiceId}` | authenticated | Invoice with items + payments |
+| PUT `/api/v1/invoices/{invoiceId}` | ADMIN/BILLING_STAFF | Edit items/tax/discount/dueDate/notes; only when PENDING |
+| POST `/api/v1/invoices/{invoiceId}/cancel` | ADMIN/BILLING_STAFF | Cancel; only PENDING with no payments |
+| POST `/api/v1/invoices/{invoiceId}/payments` | ADMIN/BILLING_STAFF | Record payment (≤ remaining balance); recomputes status PAID/PARTIALLY_PAID |
+| GET `/api/v1/invoices/{invoiceId}/payments` | authenticated | List payments |
+| POST `/api/v1/payments/{paymentId}/refund` | ADMIN/BILLING_STAFF | Refund a COMPLETED payment (→ REFUNDED) |
 
-#### GET /api/v1/patients
-- Purpose: Search or list patients.
-- Authentication: JWT
-- Query params: name, phone, email, status, page, size
-- Response: paginated patient list
-- Error codes: INVALID_REQUEST, UNAUTHORIZED
+## 8. Notification Service (8089) — `/api/v1/notifications`
 
-#### POST /api/v1/patients/{id}/allergies
-- Purpose: Add a patient allergy record.
-- Authentication: JWT
-- Response: created allergy entry
+| Method & Path | Auth | Description |
+|---|---|---|
+| POST `` | none | Create notification (status PENDING) |
+| GET `` | none | List all |
+| GET `/{notificationId}` | none | Get by business id |
+| PATCH `/{notificationId}/send` | none | Mark status SENT |
 
-#### POST /api/v1/patients/{id}/conditions
-- Purpose: Add a patient condition record.
-- Authentication: JWT
-- Response: created condition entry
+## 9. Analytics Service (8088) — `/api/v1/analytics`
 
-### 4.3 Doctor Service
+| Method & Path | Auth | Description |
+|---|---|---|
+| POST `/snapshots` | none | Create metric snapshot |
+| GET `/snapshots` | none | List all |
+| GET `/snapshots/{snapshotId}` | none | Get by business id |
 
-#### POST /api/v1/doctors
-- Purpose: Register a new doctor profile.
-- Authentication: JWT
-- Request body: doctor details, specialty, department, license number
-- Response: created doctor profile
-- Error codes: VALIDATION_FAILED, CONFLICT, FORBIDDEN
+## 10. API Gateway (8080)
 
-#### GET /api/v1/doctors/{id}
-- Purpose: Retrieve a doctor profile.
-- Authentication: JWT
-- Response: doctor profile
-- Error codes: NOT_FOUND, UNAUTHORIZED
+Routes (Path predicate → service): `/api/v1/auth/**` → auth (8081), `/api/v1/patients/**` → patient (8083), `/api/v1/appointments/**` → appointment (8084), `/api/v1/medical-records/**` → medical-record (8091), `/api/v1/doctors/**` → doctor (8085), `/api/v1/invoices/**` → billing (8087), `/api/v1/notifications/**` → notification (8089), `/api/v1/analytics/**` → analytics (8088). Global CORS for `http://localhost:5173`.
 
-#### GET /api/v1/doctors
-- Purpose: List or search doctors.
-- Authentication: JWT
-- Query params: specialty, department, availability, page, size
-- Response: paginated doctor list
-
-#### PUT /api/v1/doctors/{id}
-- Purpose: Update doctor profile.
-- Authentication: JWT
-- Response: updated doctor profile
-
-#### POST /api/v1/doctors/{id}/availability
-- Purpose: Create availability schedule entries.
-- Authentication: JWT
-- Response: created availability slot
-
-#### GET /api/v1/doctors/{id}/availability
-- Purpose: Retrieve doctor availability.
-- Authentication: JWT
-- Response: availability list
-
-### 4.4 Appointment Service
-
-#### POST /api/v1/appointments
-- Purpose: Create an appointment.
-- Authentication: JWT
-- Request body: patientId, doctorId, scheduledStart, scheduledEnd, appointmentType, notes
-- Response: created appointment
-- Validation rules:
-  - doctor availability must be valid
-  - time slot must not conflict
-- Error codes: VALIDATION_FAILED, CONFLICT, NOT_FOUND
-
-#### GET /api/v1/appointments/{id}
-- Purpose: Retrieve an appointment.
-- Authentication: JWT
-- Response: appointment details
-
-#### PUT /api/v1/appointments/{id}
-- Purpose: Update appointment details.
-- Authentication: JWT
-- Response: updated appointment
-
-#### DELETE /api/v1/appointments/{id}
-- Purpose: Cancel or delete an appointment.
-- Authentication: JWT
-- Response: cancellation confirmation
-
-#### GET /api/v1/appointments
-- Purpose: List appointments for a patient, doctor, or date range.
-- Authentication: JWT
-- Query params: patientId, doctorId, status, startDate, endDate, page, size
-- Response: paginated appointment list
-
-### 4.5 Medical Record Service
-
-#### POST /api/v1/medical-records
-- Purpose: Create a medical record or encounter.
-- Authentication: JWT
-- Request body: patientId, appointmentId, encounterDate, chiefComplaint, notes
-- Response: created medical record
-- Error codes: VALIDATION_FAILED, NOT_FOUND
-
-#### GET /api/v1/medical-records/{id}
-- Purpose: Retrieve a medical record.
-- Authentication: JWT
-- Response: medical record details
-
-#### PUT /api/v1/medical-records/{id}
-- Purpose: Update a medical record.
-- Authentication: JWT
-- Response: updated record
-
-#### POST /api/v1/medical-records/{id}/notes
-- Purpose: Add a clinical note.
-- Authentication: JWT
-- Response: created note
-
-#### POST /api/v1/medical-records/{id}/diagnoses
-- Purpose: Add a diagnosis entry.
-- Authentication: JWT
-- Response: created diagnosis
-
-#### POST /api/v1/medical-records/{id}/prescriptions
-- Purpose: Create a prescription under the record.
-- Authentication: JWT
-- Response: created prescription
-
-#### POST /api/v1/medical-records/{id}/lab-orders
-- Purpose: Create a lab order.
-- Authentication: JWT
-- Response: created lab order
-
-### 4.6 Billing Service
-
-#### POST /api/v1/invoices
-- Purpose: Generate an invoice.
-- Authentication: JWT
-- Request body: patientId, appointmentId, amount, currency, description
-- Response: created invoice
-- Error codes: VALIDATION_FAILED, NOT_FOUND
-
-#### GET /api/v1/invoices/{id}
-- Purpose: Retrieve an invoice.
-- Authentication: JWT
-- Response: invoice details
-
-#### GET /api/v1/invoices
-- Purpose: List invoices.
-- Authentication: JWT
-- Query params: patientId, status, page, size
-- Response: paginated invoice list
-
-#### POST /api/v1/invoices/{id}/payments
-- Purpose: Record a payment against an invoice.
-- Authentication: JWT
-- Response: payment confirmation
-
-#### POST /api/v1/insurance-claims
-- Purpose: Create an insurance claim.
-- Authentication: JWT
-- Response: created claim
-
-### 4.7 Notification Service
-
-#### POST /api/v1/notifications
-- Purpose: Send a notification.
-- Authentication: JWT or internal service token
-- Request body: recipient, channel, template, metadata
-- Response: notification status
-- Error codes: VALIDATION_FAILED, INTERNAL_SERVER_ERROR
-
-#### GET /api/v1/notifications/{id}
-- Purpose: Retrieve notification status.
-- Authentication: JWT
-- Response: notification details
-
-#### GET /api/v1/notifications
-- Purpose: List notifications.
-- Authentication: JWT
-- Query params: recipient, status, page, size
-- Response: paginated notifications
-
-### 4.8 Analytics Service
-
-#### GET /api/v1/analytics/patients
-- Purpose: Retrieve patient-related analytics.
-- Authentication: JWT
-- Response: aggregated patient metrics
-
-#### GET /api/v1/analytics/appointments
-- Purpose: Retrieve appointment analytics.
-- Authentication: JWT
-- Response: appointment metrics
-
-#### GET /api/v1/analytics/billing
-- Purpose: Retrieve billing metrics.
-- Authentication: JWT
-- Response: financial analytics
-
-## 5. Authentication and Authorization Model
-- Public endpoints: login, register, refresh
-- Protected endpoints: all patient, doctor, appointment, record, billing, notification, and analytics actions
-- Authorization roles:
-  - Patient: own records only
-  - Doctor: assigned patients and appointments
-  - Admin: full system access
-  - Billing staff: billing and invoice access
-  - Support: limited operational access
-
-## 6. Validation Rules
-- Required fields must be present for create/update actions.
-- IDs must be valid UUIDs or numeric identifiers based on service standard.
-- Date and time fields must be parseable and logically ordered.
-- Enum values must be from approved status or type lists.
-- Sensitive fields must never be returned unless authorized.
-
-## 7. Response and Pagination Standards
-- Every list endpoint should support pagination.
-- Every response should include a traceId for debugging.
-- Response objects should remain consistent across services.
-
-## 8. API Governance Recommendations
-- Maintain OpenAPI specifications for every service.
-- Version APIs explicitly.
-- Enforce contract tests for critical endpoints.
-- Document backward compatibility policy for breaking changes.
+> Note: the gateway has two route sources — `application.yml` routes use direct service URLs (working in local dev), while the `RouteConfig` bean declares `lb://` URIs that require a discovery/load balancer (not present in this repo, so those routes are not functional).

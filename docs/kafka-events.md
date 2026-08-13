@@ -1,113 +1,56 @@
-# Event-Driven Architecture with Kafka
+# MediFlow Kafka Events
 
-## 1. Architectural Purpose
-Kafka is the backbone for asynchronous communication between services in MediFlow. It enables loose coupling, scalability, and reliable propagation of business events such as patient registration, appointment booking, billing updates, and clinical workflow changes.
+*Status: reflects the implemented codebase (2026-08-13).*
 
-## 2. Core Design Principles
-- Publish domain events when important business state changes occur.
-- Keep consumers loosely coupled from publishers.
-- Prefer event-driven integration over synchronous point-to-point calls for cross-service workflows.
-- Ensure at-least-once delivery with idempotent processing.
-- Preserve ordering where business semantics require it.
+## 1. What Is Implemented
 
-## 3. Kafka Topics
+Three services publish domain events to Kafka via Spring Kafka `KafkaTemplate` (JSON serialization). **No consumer/listener is implemented yet** — event producers exist, downstream processing (notifications, analytics) is not wired.
 
-### Patient Domain
-- patient.registered.v1
-- patient.updated.v1
-- patient.deleted.v1
+Published topics (naming: `{domain}.{event}.v1`):
 
-### Appointment Domain
-- appointment.created.v1
-- appointment.updated.v1
-- appointment.cancelled.v1
-- appointment.reminder.requested.v1
+| Topic | Publisher | Event types |
+|---|---|---|
+| `appointment.created.v1` | appointment-service | `APPOINTMENT_CREATED` |
+| `appointment.updated.v1` | appointment-service | `APPOINTMENT_UPDATED` |
+| `appointment.cancelled.v1` | appointment-service | `APPOINTMENT_CANCELLED` |
+| `medical-record.created.v1` | medical-record-service | `MEDICAL_RECORD_CREATED` |
+| `medical-record.updated.v1` | medical-record-service | `MEDICAL_RECORD_UPDATED` |
+| `invoice.generated.v1` | billing-service | `INVOICE_GENERATED` |
+| `invoice.cancelled.v1` | billing-service | `INVOICE_CANCELLED` |
+| `payment.confirmed.v1` | billing-service | `PAYMENT_CONFIRMED` |
+| `payment.refunded.v1` | billing-service | `PAYMENT_REFUNDED` |
 
-### Clinical Domain
-- medical-record.created.v1
-- prescription.submitted.v1
-- lab.order.created.v1
-- lab.result.received.v1
+## 2. Event Envelope
 
-### Billing Domain
-- invoice.generated.v1
-- payment.confirmed.v1
-- invoice.failed.v1
+Every published event follows the same shape (matching `docs/kafka-events.md` conventions; `correlationId`/`causationId`/`metadata` are declared but not populated yet):
 
-### Notification Domain
-- notification.requested.v1
-- notification.delivered.v1
-- notification.failed.v1
+```json
+{
+  "eventId": "uuid",
+  "eventVersion": 1,
+  "eventType": "APPOINTMENT_CREATED",
+  "occurredAt": "ISO-8601 instant",
+  "producerService": "appointment-service",
+  "aggregateId": "uuid (business id)",
+  "payload": { "...": "domain fields" }
+}
+```
 
-### Integration and Audit
-- audit.event.published.v1
-- system.health.v1
+- Key: business id string (e.g. appointmentId). Aggregate ordering preserved per key.
+- Versioned via `eventVersion`; topics are versioned `v1`.
 
-## 4. Publishers and Consumers
+## 3. Payloads
 
-### Publishers
-- Auth Service publishes user-related events.
-- Patient Service publishes patient lifecycle events.
-- Doctor Service publishes doctor profile and availability changes.
-- Appointment Service publishes scheduling and cancellation events.
-- Medical Record Service publishes encounter, prescription, and lab events.
-- Billing Service publishes invoice and payment events.
-- Notification Service publishes notification delivery and failure events.
+- **Appointment:** appointmentId, patientId, doctorId, startTime, endTime, status, appointmentType, reason, version.
+- **Medical record:** recordId, patientId, appointmentId, doctorId, encounterDate, recordType, chiefComplaint, diagnosis, treatmentPlan, notes, version.
+- **Billing:** invoiceId, invoiceNumber, patientId, appointmentId, status, currency, subtotal, taxAmount, discount, totalAmount, paidAmount, version; payment events additionally set paymentAmount, paymentMethod, paymentStatus.
 
-### Consumers
-- Notification Service consumes appointment, billing, and lab events.
-- Analytics Service consumes operational and business events for reporting.
-- Billing Service consumes appointment and payment-related events.
-- Medical Record Service consumes appointment and lab events.
-- Auth Service may consume audit or security-related events if needed.
+## 4. What Is NOT Implemented (documented, not delivered)
 
-## 5. Event Payload Design
-Each event should include:
-- eventId
-- eventVersion
-- eventType
-- occurredAt
-- producerService
-- correlationId
-- causationId
-- aggregateId
-- payload
-- metadata
+- No consumers for any topic (notification-service and analytics-service include the Kafka dependency but define no `@KafkaListener`).
+- No outbox pattern, retries, or dead-letter queues (no DLQ topics defined in code).
+- Patient-service publishes no events (Kafka producer config only).
 
-The payload should contain only the relevant business data required by the consumer and should remain schema-stable across versions.
+## 5. Local Kafka
 
-## 6. Retry Strategy
-- Retry transient failures with exponential backoff.
-- Use a bounded retry count to avoid infinite loops.
-- Retry only when the failure is temporary or service-dependent.
-- Persist failed messages for later reprocessing.
-
-## 7. Dead Letter Queue Strategy
-A dead-letter topic should be used for messages that exceed retry limits or fail due to unrecoverable business issues.
-- Example: dlq.notification.requested.v1
-- Dead-letter messages should be retained with error metadata for investigation and replay.
-
-## 8. Event Versioning Strategy
-- Use event versions in the topic name and message header.
-- Maintain backward compatibility for consumers.
-- Introduce new event versions only when contract changes are unavoidable.
-- Prefer additive schema changes over breaking changes.
-
-## 9. Exactly-Once Processing Strategy
-The design should aim for effectively-once semantics rather than strict Kafka exactly-once guarantees. Recommended approach:
-- Idempotent consumer logic.
-- Deduplication using eventId or aggregateId.
-- Outbox pattern for reliable publication.
-- Transactional outbox with database and Kafka integration.
-
-## 10. Ordering Strategy
-- Preserve ordering within a single partition for the same aggregate or entity.
-- Use partition keys such as patientId, appointmentId, or invoiceId.
-- Do not assume global ordering across all topics or partitions.
-- For cross-aggregate workflows, use correlation IDs to correlate related events.
-
-## 11. Operational Considerations
-- Monitor consumer lag, partition skew, and deserialization failures.
-- Use schema registry or versioned JSON contracts for event compatibility.
-- Apply access controls and authentication for producers and consumers.
-- Retain event history according to business and compliance needs.
+`docker compose up -d` runs `apache/kafka:4.0.0` (single node, KRaft) on `localhost:9092`. Services default to `KAFKA_BOOTSTRAP_SERVERS=localhost:9092`.

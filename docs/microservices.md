@@ -1,74 +1,31 @@
-# Microservices Design
+# MediFlow Microservices
 
-## Service Catalog
-- API Gateway
-- Auth Service
-- Patient Service
-- Doctor Service
-- Appointment Service
-- Medical Record Service
-- Billing Service
-- Notification Service
-- Analytics Service
-- Pharmacy Service
-- Lab Service
-- Service Registry
+*Status: reflects the implemented codebase (2026-08-13).*
 
-## Service Responsibilities
-### API Gateway
-- Entry point for all client traffic.
-- Authentication and routing.
-- Rate limiting, request validation, and aggregation.
+## Service Catalog (implemented)
 
-### Auth Service
-- User registration and login.
-- JWT issuance and refresh.
-- Role and permission management.
+| Service | Port | Responsibility | Key capabilities |
+|---|---|---|---|
+| api-gateway | 8080 | Entry point; routes `/api/v1/**` by path to services; global CORS | Spring Cloud Gateway; no auth filtering at the edge |
+| auth-service | 8081 | Identity + tokens | register/login/refresh/logout/me; BCrypt; JWT access + rotating refresh tokens; users/roles/user_roles/refresh_tokens |
+| patient-service | 8083 | Patient profiles | CRUD + search; soft delete; ownership enforcement (PATIENT only own profile); 409 on recreating soft-deleted profile |
+| appointment-service | 8084 | Scheduling | CRUD + cancel; time-range + overlap validation; status lifecycle (SCHEDULED/CONFIRMED → reschedulable); publishes appointment events |
+| doctor-service | 8085 | Provider management | Doctor profiles + search; availability slots + leaves; ownership enforcement (DOCTOR only own profile) |
+| billing-service | 8087 | Invoicing + payments | Invoice generation (items, tax, discount, totals), edit (PENDING only), cancel, record payment, refund; publishes invoice/payment events |
+| analytics-service | 8088 | Reporting | Metric snapshot CRUD (no aggregation logic yet) |
+| notification-service | 8089 | Notifications | Notification record CRUD + mark-sent (no delivery integration yet) |
+| medical-record-service | 8091 | Clinical records | Encounter records CRUD + search; doctor/patient ownership and scoped search; publishes medical-record events |
 
-### Patient Service
-- Patient profile lifecycle.
-- Patient search and demographic data.
-- Patient event publication for downstream services.
+## Scaffolds / Not in reactor
 
-### Doctor Service
-- Physician and specialist profiles.
-- Availability and department assignment.
-- Care-team coordination data.
-
-### Appointment Service
-- Booking, rescheduling, and cancellation workflows.
-- Appointment status tracking.
-- Reminder event generation.
-
-### Medical Record Service
-- Clinical notes and encounter history.
-- Document attachments and records indexing.
-- Integration with patient and appointment workflows.
-
-### Billing Service
-- Invoicing and payment tracking.
-- Insurance and payment status visibility.
-- Financial event publication.
-
-### Notification Service
-- Email, SMS, and in-app notifications.
-- Reminder and alert dispatch.
-- Event-driven message fanout.
-
-### Analytics Service
-- Operational reporting and dashboard metrics.
-- Population-level insights and trend analysis.
-- Read-only reporting views.
-
-### Pharmacy Service
-- Prescription processing and fulfillment coordination.
-- Medication order management.
-- Integration with billing and notification flows.
-
-### Lab Service
-- Lab order submission and results handling.
-- Clinical result notifications.
-- Integration with medical records.
+- `lab-service` (8090) and `pharmacy-service`: pom + application.yml only, no Java sources. Excluded from the root Maven build by design.
+- `service-registry`, `config-server`, `backend/shared-parent`: documentation placeholders, no code. Services enable the Eureka client (`EUREKA_URL`), but no registry server exists in this repo; the gateway yml routes use direct service URLs instead.
 
 ## Service Boundaries
-Each service owns its domain model and data store. Cross-service interactions rely on well-defined APIs and events rather than shared databases.
+
+Each service owns its domain model, its database tables (Flyway migrations), and its JWT validation. Cross-service references are by Auth-user/business UUIDs (no shared tables, no FK joins across services). Synchronous REST via the gateway; asynchronous events via Kafka producers.
+
+## Internal Dependencies
+
+- All services depend on `common-library` (BaseEntity, ApiResponse, GlobalExceptionHandler, DomainEvent, enums, constants).
+- Build: Maven reactor from the root `pom.xml`; no Maven wrapper (system `mvn` required).

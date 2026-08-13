@@ -1,72 +1,60 @@
-# MediFlow Architecture Document
+# MediFlow Architecture
+
+*Status: reflects the implemented codebase (2026-08-13).*
 
 ## 1. Overview
-MediFlow is a production-ready patient management platform for hospitals, clinics, and healthcare networks. The target architecture is a modular microservices system that supports secure patient workflows, clinician collaboration, billing, laboratory integration, pharmacy operations, and analytics.
 
-## 2. Business Requirements
-- Centralize patient information across departments.
-- Accelerate appointment scheduling and clinical workflows.
-- Provide secure access for patients, clinicians, admins, and support staff.
-- Support interoperability with labs, pharmacies, insurers, and notification services.
-- Ensure auditability, reliability, and compliance readiness.
+MediFlow is a patient-management platform built as a set of independently deployable Spring Boot microservices behind a Spring Cloud Gateway, with a React + TypeScript frontend, PostgreSQL persistence (one schema per service, unified by a shared database in local dev), and Apache Kafka for event propagation.
 
-## 3. Functional Requirements
-- Patient registration and profile management.
-- Doctor and specialty management.
-- Appointment booking, rescheduling, and cancellation.
-- Medical record creation and retrieval.
-- Billing and invoice generation.
-- Lab and pharmacy request processing.
-- Notification delivery for reminders and alerts.
-- Reporting and analytics for operational insights.
+## 2. System Composition
 
-## 4. Non-Functional Requirements
-- High availability and fault tolerance.
-- Horizontal scalability for peak traffic.
-- Secure authentication and authorization.
-- Low-latency API responses.
-- Strong observability and operational monitoring.
-- Recoverability and backup strategy.
+- **React + TypeScript frontend** (`frontend/mediflow-ui`, Vite, port 5173). Presentation shell only: pages for dashboard, patients, doctors, appointments, billing, notifications, and analytics. No API client or auth wiring yet.
+- **Spring Cloud Gateway** (`api-gateway`, port 8080) routes `/api/v1/**` paths to the backing services and applies global CORS.
+- **Backend microservices** under `backend/`, all depending on `common-library`.
+- **Apache Kafka** for asynchronous domain events published by appointment, medical-record, and billing services.
+- **PostgreSQL 16** via Flyway migrations (`ddl-auto: validate`).
 
-## 5. Architectural Principles
-- Domain-driven service boundaries.
-- Database-per-service ownership.
-- Event-driven integration for asynchronous workflows.
-- API-first design with clear contracts.
-- Secure-by-design implementation.
-- Cloud-native deployment using containers and orchestration.
+## 3. Maven Reactor
 
-## 6. High-Level Architecture
-The system is composed of:
-- A React-based frontend for clinical and patient experiences.
-- An API Gateway to route requests and enforce edge policies.
-- Independent backend microservices for business capabilities.
-- Apache Kafka for event propagation.
-- PostgreSQL databases per service.
-- Docker and Kubernetes for deployment.
+Root `pom.xml` (`com.mediflow:mediflow-parent`, Java 21, Spring Boot 3.5.0, Spring Cloud 2025.0.0) builds these modules:
 
-## 7. System Modules
-- Identity and Access Management
-- Patient Management
-- Doctor and Care Team Management
-- Appointment Management
-- Medical Records
-- Billing and Payments
-- Laboratory and Pharmacy Integration
-- Notifications
-- Reporting and Analytics
+| Module | Port | Purpose |
+|---|---|---|
+| `common-library` | - | Shared base entity, response envelope, exceptions, event/domain types, enums, utilities |
+| `api-gateway` | 8080 | Spring Cloud Gateway routing + global CORS |
+| `auth-service` | 8081 | User registration, login, JWT/refresh-token flow |
+| `patient-service` | 8083 | Patient profile lifecycle and search |
+| `appointment-service` | 8084 | Appointment booking, rescheduling, cancellation + events |
+| `doctor-service` | 8085 | Doctor profiles, availability, leave + schedule |
+| `billing-service` | 8087 | Invoices, payments, refunds + events |
+| `analytics-service` | 8088 | Metric snapshots CRUD |
+| `notification-service` | 8089 | Notification records CRUD |
+| `medical-record-service` | 8091 | Clinical encounter records + events |
 
-## 8. Communication Flow
-- Clients call the gateway through REST APIs.
-- The gateway authenticates and routes requests to the corresponding service.
-- Services interact via REST for synchronous use cases and Kafka for asynchronous events.
-- Notification and analytics services consume published events.
+`backend/lab-service` (8090) and `backend/pharmacy-service` are scaffolds only (pom + application.yml, no Java sources) and are NOT in the reactor. `backend/shared-parent/`, `service-registry/`, and `config-server/` are placeholders; services enable the Eureka client but no registry server exists in this repository.
 
-## 9. Deployment View
-- Development, staging, and production environments.
-- Containerized services deployed behind a load balancer.
-- Centralized logging, metrics, and tracing.
-- Managed PostgreSQL and Kafka infrastructure.
+## 4. Layered Service Design
 
-## 10. Architectural Summary
-MediFlow adopts a cloud-native, microservices-based, event-driven architecture that is suitable for rapid growth, domain evolution, and healthcare-grade reliability.
+Each service follows `controller → service → repository → entity`, plus `dto`, `mapper` (MapStruct), and `security` packages. Services are stateless and validate inbound JWTs locally (no call back to auth-service at request time).
+
+## 5. Identity and Data Flow
+
+- `auth-service` owns the canonical identity: `User.id` (UUID). Access tokens carry `sub` (username), `uid` (User UUID), and `roles`.
+- Domain services store **Auth user UUIDs** as foreign references: `Patient.patientId`, `Doctor.doctorId`, `MedicalRecord.patientId/doctorId`, `Appointment.patientId/doctorId`.
+- Cross-service ownership is enforced per service by comparing the JWT `uid` claim with the stored business id (see `docs/security.md`).
+
+## 6. Communication
+
+- **Synchronous:** REST over HTTP through the gateway; services are called directly by port in local dev.
+- **Asynchronous:** Kafka events published (no consumers yet): `appointment.*`, `medical-record.*`, `invoice.*`, `payment.*` (see `docs/kafka-events.md`).
+
+## 7. Runtime Configuration
+
+- Required env vars: `JWT_SECRET`, `DB_PASSWORD`. Optional: `DB_URL`, `KAFKA_BOOTSTRAP_SERVERS`, `EUREKA_URL`, `CORS_ALLOWED_ORIGINS`, JWT expirations, per-service URLs.
+- Default per-service DBs (`patient_db`, `auth_db`, ...) are overridden by `.env` `DB_URL` to a single shared `mediflow` database in local dev.
+
+## 8. Known Limitations
+
+- Notification and analytics services have no Spring Security dependency; their endpoints are unauthenticated.
+- Admin/staff-created patient and doctor profiles accept an explicit Auth user UUID without a synchronous check that the user exists (see `docs/security.md`).
+- No service registry, config server, rate limiting, tracing, or consumer-side Kafka processing implemented.
