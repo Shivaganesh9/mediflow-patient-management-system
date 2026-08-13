@@ -19,6 +19,7 @@ public class AppointmentResponse {
     AppointmentStatus status;
     String notes;
     String reason;
+    String appointmentType;
     Instant createdAt;
     Instant updatedAt;
     Long version;

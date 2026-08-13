@@ -1,15 +1,22 @@
 package com.mediflow.appointment.controller;
 
+import com.mediflow.appointment.dto.AppointmentResponse;
 import com.mediflow.appointment.dto.CreateAppointmentRequest;
-import com.mediflow.appointment.entity.Appointment;
+import com.mediflow.appointment.dto.UpdateAppointmentRequest;
+import com.mediflow.appointment.entity.AppointmentStatus;
+import com.mediflow.appointment.mapper.AppointmentMapper;
 import com.mediflow.appointment.service.AppointmentService;
 import com.mediflow.common.response.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 @RestController
@@ -18,25 +25,49 @@ import java.util.UUID;
 public class AppointmentController {
 
     private final AppointmentService appointmentService;
+    private final AppointmentMapper appointmentMapper;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public ApiResponse<Appointment> createAppointment(@Valid @RequestBody CreateAppointmentRequest request) {
-        return ApiResponse.success(appointmentService.createAppointment(request), "Appointment created successfully");
+    public ApiResponse<AppointmentResponse> createAppointment(@Valid @RequestBody CreateAppointmentRequest request) {
+        return ApiResponse.success(
+                appointmentMapper.toResponse(appointmentService.createAppointment(request)),
+                "Appointment created successfully");
     }
 
     @GetMapping
-    public ApiResponse<List<Appointment>> getAllAppointments() {
-        return ApiResponse.success(appointmentService.getAllAppointments(), "Appointments retrieved successfully");
+    public ApiResponse<Page<AppointmentResponse>> getAppointments(
+            @RequestParam(required = false) AppointmentStatus status,
+            @RequestParam(required = false) UUID patientId,
+            @RequestParam(required = false) UUID doctorId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime fromTime,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime toTime,
+            @PageableDefault(size = 20, sort = "startTime") Pageable pageable) {
+        Page<AppointmentResponse> appointments = appointmentService
+                .searchAppointments(status, patientId, doctorId, fromTime, toTime, pageable)
+                .map(appointmentMapper::toResponse);
+        return ApiResponse.success(appointments, "Appointments retrieved successfully");
     }
 
     @GetMapping("/{appointmentId}")
-    public ApiResponse<Appointment> getAppointment(@PathVariable UUID appointmentId) {
-        return ApiResponse.success(appointmentService.getAppointment(appointmentId), "Appointment retrieved successfully");
+    public ApiResponse<AppointmentResponse> getAppointment(@PathVariable UUID appointmentId) {
+        return ApiResponse.success(
+                appointmentMapper.toResponse(appointmentService.getAppointment(appointmentId)),
+                "Appointment retrieved successfully");
+    }
+
+    @PutMapping("/{appointmentId}")
+    public ApiResponse<AppointmentResponse> updateAppointment(@PathVariable UUID appointmentId,
+                                                              @Valid @RequestBody UpdateAppointmentRequest request) {
+        return ApiResponse.success(
+                appointmentMapper.toResponse(appointmentService.updateAppointment(appointmentId, request)),
+                "Appointment updated successfully");
     }
 
     @PatchMapping("/{appointmentId}/cancel")
-    public ApiResponse<Appointment> cancelAppointment(@PathVariable UUID appointmentId) {
-        return ApiResponse.success(appointmentService.cancelAppointment(appointmentId), "Appointment cancelled successfully");
+    public ApiResponse<AppointmentResponse> cancelAppointment(@PathVariable UUID appointmentId) {
+        return ApiResponse.success(
+                appointmentMapper.toResponse(appointmentService.cancelAppointment(appointmentId)),
+                "Appointment cancelled successfully");
     }
 }

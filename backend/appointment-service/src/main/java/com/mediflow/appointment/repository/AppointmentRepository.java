@@ -1,6 +1,7 @@
 package com.mediflow.appointment.repository;
 
 import com.mediflow.appointment.entity.Appointment;
+import com.mediflow.appointment.entity.AppointmentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.data.domain.Page;
@@ -19,8 +20,12 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
     @Query("select a from Appointment a where a.appointmentId = :appointmentId")
     Optional<Appointment> findByAppointmentIdForUpdate(@Param("appointmentId") UUID appointmentId);
 
+    Optional<Appointment> findByAppointmentId(UUID appointmentId);
+
     @Query("select count(a) > 0 from Appointment a where (a.patientId = :patientId or a.doctorId = :doctorId) "
-        + "and a.status not in ('CANCELLED', 'COMPLETED', 'NO_SHOW') "
+        + "and a.status not in (com.mediflow.appointment.entity.AppointmentStatus.CANCELLED, "
+        + "com.mediflow.appointment.entity.AppointmentStatus.COMPLETED, "
+        + "com.mediflow.appointment.entity.AppointmentStatus.NO_SHOW) "
         + "and a.startTime < :endTime and a.endTime > :startTime")
     boolean hasOverlappingAppointment(@Param("patientId") UUID patientId, @Param("doctorId") UUID doctorId,
                       @Param("startTime") java.time.LocalDateTime startTime,
@@ -28,7 +33,9 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
 
     @Query("select count(a) > 0 from Appointment a where a.appointmentId <> :appointmentId "
         + "and (a.patientId = :patientId or a.doctorId = :doctorId) "
-        + "and a.status not in ('CANCELLED', 'COMPLETED', 'NO_SHOW') "
+        + "and a.status not in (com.mediflow.appointment.entity.AppointmentStatus.CANCELLED, "
+        + "com.mediflow.appointment.entity.AppointmentStatus.COMPLETED, "
+        + "com.mediflow.appointment.entity.AppointmentStatus.NO_SHOW) "
         + "and a.startTime < :endTime and a.endTime > :startTime")
     boolean hasOverlappingAppointmentForUpdate(@Param("appointmentId") UUID appointmentId,
                            @Param("patientId") UUID patientId, @Param("doctorId") UUID doctorId,

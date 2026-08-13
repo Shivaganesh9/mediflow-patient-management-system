@@ -42,6 +42,9 @@ public class Appointment extends BaseEntity {
     @Column(nullable = false)
     private String reason;
 
+    @Column(length = 50)
+    private String appointmentType;
+
     @Version
     private Long version;
 }

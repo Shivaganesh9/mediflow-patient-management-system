@@ -27,4 +27,6 @@ public class CreateAppointmentRequest {
 
     @NotNull
     private String reason;
+
+    private String appointmentType;
 }
