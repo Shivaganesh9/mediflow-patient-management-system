@@ -77,12 +77,13 @@
 
 ## 8. Notification Service (8089) — `/api/v1/notifications`
 
+Notifications are created by Kafka consumers (appointment/billing events), never by clients.
+
 | Method & Path | Auth | Description |
 |---|---|---|
-| POST `` | none | Create notification (status PENDING) |
-| GET `` | none | List all |
-| GET `/{notificationId}` | none | Get by business id |
-| PATCH `/{notificationId}/send` | none | Mark status SENT |
+| GET `` | authenticated | Paginated list for the current user (default `createdAt` desc, size 20); ADMIN sees all, others scoped to `recipient_id == JWT uid` |
+| GET `/unread-count` | authenticated | Unread count (`readAt IS NULL`) for the current user; ADMIN sees global count |
+| PATCH `/{notificationId}/read` | authenticated | Mark one notification read; owner-only (ADMIN bypass) |
 
 ## 9. Analytics Service (8088) — `/api/v1/analytics`
 

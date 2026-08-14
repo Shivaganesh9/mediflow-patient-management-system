@@ -4,7 +4,7 @@
 
 ## 1. What Is Implemented
 
-Three services publish domain events to Kafka via Spring Kafka `KafkaTemplate` (JSON serialization). **No consumer/listener is implemented yet** — event producers exist, downstream processing (notifications, analytics) is not wired.
+Three services publish domain events to Kafka via Spring Kafka `KafkaTemplate` (JSON serialization). **notification-service is the only consumer** — it listens to the appointment and billing topics and materializes in-app notifications (idempotent, retry + DLQ). Analytics consumption is not wired.
 
 Published topics (naming: `{domain}.{event}.v1`):
 
@@ -47,10 +47,19 @@ Every published event follows the same shape (matching `docs/kafka-events.md` co
 
 ## 4. What Is NOT Implemented (documented, not delivered)
 
-- No consumers for any topic (notification-service and analytics-service include the Kafka dependency but define no `@KafkaListener`).
-- No outbox pattern, retries, or dead-letter queues (no DLQ topics defined in code).
+- No consumers for `medical-record.created.v1`, `medical-record.updated.v1`, `invoice.cancelled.v1`, or `payment.refunded.v1` — notification-service listens to appointment (created/updated/cancelled) and billing (invoice.generated/payment.confirmed) topics only. analytics-service includes the Kafka dependency but defines no `@KafkaListener`.
+- No outbox pattern (producers write directly to Kafka within the transaction).
 - Patient-service publishes no events (Kafka producer config only).
 
-## 5. Local Kafka
+## 5. Notification Consumer Behaviour
+
+notification-service consumes the topics above with Spring `JsonDeserializer` and type headers written by the producers' `JsonSerializer` (payloads are deserialized into the exact `AppointmentEvent`/`BillingEvent` classes from the producer jars).
+
+- Consumer group `notification-service`; `auto-offset-reset: earliest`.
+- **Idempotency:** the event `eventId` is stored as `notifications.source_event_id` (unique index). A duplicate event is skipped before insert; a concurrent duplicate is swallowed on `DataIntegrityViolationException`.
+- **Retry/DLQ:** `DefaultErrorHandler` with `FixedBackOff(1000ms, 3 retries)` and a `DeadLetterPublishingRecoverer` that publishes to `dlq.<original-topic>`.
+- Only events with a `patientId` payload produce a notification; the recipient is the patient (`recipientId = payload.patientId`). No doctor fan-out.
+
+## 6. Local Kafka
 
 `docker compose up -d` runs `apache/kafka:4.0.0` (single node, KRaft) on `localhost:9092`. Services default to `KAFKA_BOOTSTRAP_SERVERS=localhost:9092`.

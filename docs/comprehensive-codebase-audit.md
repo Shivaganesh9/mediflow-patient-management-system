@@ -70,7 +70,7 @@ The backend uses a domain-oriented microservice layout:
 - `doctor-service`: doctor/provider domain.
 - `appointment-service`: appointment domain and Kafka producer configuration.
 - `billing-service`: invoices and billing domain.
-- `notification-service`: notification domain and Kafka producer configuration.
+- `notification-service`: notification domain and Kafka consumer (appointment/billing topics).
 - `analytics-service`: analytics domain.
 - `lab-service`, `medical-record-service`, and `pharmacy-service`: present as separate directories but not included in the root reactor and not at the same implementation maturity.
 - `service-registry` and `config-server`: documented infrastructure concepts, but no runnable application entry point was found in the workspace.
@@ -169,7 +169,7 @@ The existing Java 21 build was checked during the audit workflow and failed befo
 ### Reliability and performance debt
 
 - `findAll()` is used for patient retrieval without visible pagination. Patient and analytics lists should use cursor/page requests and bounded response sizes.
-- No visible idempotency strategy exists for appointment creation, billing operations, notifications, or Kafka consumers. Add request idempotency keys and event deduplication.
+- No visible idempotency strategy exists for appointment creation or billing operations. Add request idempotency keys. Kafka consumers: notification-service deduplicates by `source_event_id` (unique index) and retries via `DefaultErrorHandler` → DLQ; analytics has no consumer yet.
 - No visible retry, dead-letter, timeout, circuit-breaker, or backpressure policy is established for service and Kafka interactions.
 - No health/readiness probes, resource limits, backup policy, or database connection-pool policy was found in the executable deployment definitions.
 - Shared-library coupling can cause broad blast radius: common response, security, and exception changes affect every service. Version and test the library as an explicit internal platform dependency.
@@ -325,9 +325,9 @@ MediFlow has a sensible domain direction and a useful initial service decomposit
 - **P1 `.env.example`:** added with masked/required variables; `JWT_SECRET` and `DB_PASSWORD` have no defaults (fail fast).
 - **P1 migrations:** every active service uses Flyway migrations with `ddl-auto: validate` (no `update`).
 - **P1 auth propagation:** per-service JWT filters enforce authentication; RBAC endpoint rules and resource-ownership checks (patient/doctor/medical-record) enforce authorization.
-- **P1 testcontainers:** medical-record-service integration tests run against Testcontainers PostgreSQL 16; other services use H2 (PostgreSQL mode).
+- **P1 testcontainers:** medical-record-service and notification-service integration tests run against Testcontainers PostgreSQL 16; other services use H2 (PostgreSQL mode).
 - **P1 date validation:** `@DateTimeFormat`/typed DTOs and a `DateTimeParseException → 400` mapping are handled by `GlobalExceptionHandler`.
-- **Doctor, billing, notification, analytics:** now implemented domains (not scaffolds); appointment service has conflict detection and event publishing.
+- **Doctor, billing, notification, analytics:** now implemented domains (not scaffolds); appointment service has conflict detection and event publishing; notification-service consumes appointment/billing events (idempotent, retry/DLQ).
 
 ### Still outstanding (unchanged)
 - Frontend not API-connected (prototype shell; no auth, routing, or API client).

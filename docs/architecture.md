@@ -28,7 +28,7 @@ Root `pom.xml` (`com.mediflow:mediflow-parent`, Java 21, Spring Boot 3.5.0, Spri
 | `doctor-service` | 8085 | Doctor profiles, availability, leave + schedule |
 | `billing-service` | 8087 | Invoices, payments, refunds + events |
 | `analytics-service` | 8088 | Metric snapshots CRUD |
-| `notification-service` | 8089 | Notification records CRUD |
+| `notification-service` | 8089 | In-app notifications from Kafka events (idempotent, retry/DLQ) |
 | `medical-record-service` | 8091 | Clinical encounter records + events |
 
 `backend/lab-service` (8090) and `backend/pharmacy-service` are scaffolds only (pom + application.yml, no Java sources) and are NOT in the reactor. `backend/shared-parent/`, `service-registry/`, and `config-server/` are placeholders; services enable the Eureka client but no registry server exists in this repository.

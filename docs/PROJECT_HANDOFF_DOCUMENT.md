@@ -72,7 +72,7 @@ Generated: 2026-07-08
 - [backend/appointment-service](../backend/appointment-service): Appointment CRUD, cancellation, and related domain logic.
 - [backend/doctor-service](../backend/doctor-service): Doctor-domain scaffold for future implementation.
 - [backend/billing-service](../backend/billing-service): Billing and invoice domain scaffold.
-- [backend/notification-service](../backend/notification-service): Notification domain scaffold and event-consumer placeholder.
+- [backend/notification-service](../backend/notification-service): In-app notifications materialized from Kafka appointment/billing events; JWT-scoped reads; retry/DLQ.
 - [backend/analytics-service](../backend/analytics-service): Analytics/reporting scaffold.
 - [backend/api-gateway](../backend/api-gateway): Intended entrypoint for routing and auth propagation.
 - [backend/service-registry](../backend/service-registry): Discovery server area, not fully implemented.
@@ -316,7 +316,6 @@ List every required environment variable with a description. Mask secrets.
 ## 11. Current TODOs
 - Implement real doctor-service domain logic and API endpoints.
 - Implement billing-service domain and invoice logic.
-- Implement notification-service messaging and event handling.
 - Implement analytics-service reporting and metrics.
 - Configure API gateway routing and auth forwarding.
 - Implement service discovery and registry properly.
@@ -431,8 +430,7 @@ The next logical implementation sequence is:
 1. Implement the doctor-service domain model and API.
 2. Add gateway routing and auth forwarding.
 3. Implement billing-service domain and endpoints.
-4. Implement notification-service event consumers and message templates.
-5. Implement analytics-service basic reporting endpoints.
+4. Implement analytics-service basic reporting endpoints.
 6. Add database migrations and seed data.
 7. Build frontend pages that consume the backend APIs.
 8. Add tests and deployment assets.

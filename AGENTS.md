@@ -33,12 +33,14 @@ Enterprise patient-management platform: Spring Boot 3 microservices + React/TS +
 
 ## Data layer
 - Flyway migrations per service in `src/main/resources/db/migration/` (`V1__*.sql`; doctor/patient also have `V2`). `ddl-auto: validate` — schema comes from migrations, not Hibernate. Add a numbered migration for schema changes.
-- Tests override to H2 (PostgreSQL mode) with Flyway disabled and `create-drop` — test schema is generated from JPA entities.
+- `notification-service` depends on the `appointment-service`/`billing-service` jars (for event payload classes), so its migrations live in `src/main/resources/db/migration/notification/` and Flyway is scoped via `spring.flyway.locations: classpath:db/migration/notification` — the app's own `application.yml` (BOOT-INF/classes) wins over the dependency jars' bundled config (first-match-wins).
+- Tests override to H2 (PostgreSQL mode) with Flyway disabled and `create-drop` — test schema is generated from JPA entities. Exception: `medical-record-service` and `notification-service` integration tests use Testcontainers PostgreSQL 16 with Flyway enabled (`disabledWithoutDocker = true`); notification-service also sets the JVM default timezone to UTC for Testcontainers (pgjdbc rejects non-UTC tz on PG16).
 - Default `DB_URL` in each service yml points to a per-service DB (e.g. `patient_db`), but `.env` overrides to a single shared `mediflow` DB; env var wins.
 
 ## Kafka conventions (see docs/kafka-events.md)
 - Topic names: `{domain}.{event}.v1` (e.g. `patient.registered.v1`); DLQs: `dlq.<topic>`.
 - Event envelope fields: eventId, eventVersion, eventType, occurredAt, producerService, correlationId, causationId, aggregateId, payload, metadata.
+- `notification-service` is the only consumer: it listens to `appointment.created/updated/cancelled.v1` + `invoice.generated/payment.confirmed.v1` (recipient = payload `patientId`), is idempotent via `source_event_id` (unique), and uses `DefaultErrorHandler` + `DeadLetterPublishingRecoverer` (`FixedBackOff(1000ms, 3)`) to `dlq.<topic>`. Payloads are deserialized into the exact producer `AppointmentEvent`/`BillingEvent` classes (JsonDeserializer type headers, `spring.json.trusted.packages: com.mediflow.*`).
 
 ## Conventions
 - `docs/coding-standards.md` is the style source: layered architecture, shared `ApiResponse` envelope, consistent exceptions, TS strict mode, functional React components.

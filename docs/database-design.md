@@ -48,7 +48,7 @@
 
 ## 8. Notification Service (notification-service)
 
-`notifications`: `notification_id` UUID UNIQUE, `recipient_id` UUID, `channel`, `subject`, `message` (4000), `status` (default PENDING, set to SENT via `PATCH .../send`). Index `recipient_id`.
+`notifications` (V1, V2): `notification_id` UUID UNIQUE, `recipient_id` UUID, `notification_type` (APPOINTMENT_CREATED/APPOINTMENT_UPDATED/APPOINTMENT_CANCELLED/INVOICE_GENERATED/PAYMENT_CONFIRMED), `channel` (IN_APP), `subject`, `message` (4000), `read_at` (NULL = unread), `source_event_id` UUID (unique, from Kafka eventId, idempotency key), `created_at`, `updated_at`. V1 defined a `status` column dropped in V2. Index on `recipient_id`.
 
 ## 9. Analytics Service (analytics-service)
 

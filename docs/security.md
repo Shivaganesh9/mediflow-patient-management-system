@@ -29,7 +29,8 @@ Every protected domain service has its own `JwtProvider` + `JwtAuthenticationFil
 | medical-record | POST `/api/v1/medical-records` and PUT `/api/v1/medical-records/*` → ADMIN, DOCTOR; GET → authenticated |
 | billing | invoice/payment writes → ADMIN, BILLING_STAFF; reads → authenticated |
 | appointment | all → authenticated |
-| notification, analytics | **no Spring Security**; endpoints unauthenticated |
+| notification | all → authenticated; reads scoped to `recipient_id == uid`, mark-read owner-only (ADMIN bypass) |
+| analytics | **no Spring Security**; endpoints unauthenticated |
 
 ## 5. Resource Ownership Enforcement
 

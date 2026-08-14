@@ -10,7 +10,7 @@
 - doctor-service (8085) — profiles, availability, leaves
 - billing-service (8087) — invoices, line items, payments, refunds; events
 - analytics-service (8088) — metric snapshot CRUD
-- notification-service (8089) — notification record CRUD + mark-sent
+- notification-service (8089) — in-app notifications from Kafka appointment/billing events; idempotent, retry/DLQ
 - medical-record-service (8091) — clinical records, scoped access; events
 
 ## Scaffolds / placeholders

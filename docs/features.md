@@ -39,7 +39,7 @@
 - Publishes `invoice.*.v1` and `payment.*.v1` events.
 
 ### Notifications & Analytics
-- Notification record CRUD + mark-as-sent.
+- Notification records materialized from Kafka appointment/billing events (idempotent, retry + DLQ); paginated list + unread count, mark-read.
 - Metric snapshot CRUD.
 
 ## Frontend (prototype shell)
@@ -48,7 +48,7 @@
 - **Not wired to the backend:** no API client, no authentication, no routing; pages use local/hard-coded data.
 
 ## Not yet implemented (intentional scope)
-- Kafka consumers / notification and analytics event processing.
+- Analytics event processing (analytics-service has no Kafka consumer yet).
 - Lab and pharmacy services (scaffolds only).
 - Service registry/config server, rate limiting, tracing, observability stack, audit logging.
 - FHIR/HL7 interoperability, insurance claims, patient self-service portal.
