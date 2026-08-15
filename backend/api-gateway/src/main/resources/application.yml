@@ -30,7 +30,7 @@ spring:
         - id: billing-service
           uri: ${BILLING_SERVICE_URL:http://localhost:8087}
           predicates:
-            - Path=/api/v1/invoices/**
+            - Path=/api/v1/invoices/**,/api/v1/payments/**
         - id: notification-service
           uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8089}
           predicates:
