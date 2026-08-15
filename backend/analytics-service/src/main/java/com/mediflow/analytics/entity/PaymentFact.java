@@ -8,27 +8,34 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(name = "metric_snapshots")
+@Table(name = "payment_facts")
 @Getter
 @Setter
 @NoArgsConstructor
-public class MetricSnapshot extends BaseEntity {
+public class PaymentFact extends BaseEntity {
 
     @Column(nullable = false, unique = true, updatable = false)
-    private UUID snapshotId = UUID.randomUUID();
+    private UUID sourceEventId;
+
+    private UUID invoiceId;
+
+    private UUID patientId;
 
     @Column(nullable = false)
-    private String category;
+    private BigDecimal amount;
+
+    private String currency;
+
+    private String method;
 
     @Column(nullable = false)
-    private String metricName;
+    private String status;
 
     @Column(nullable = false)
-    private Double value;
-
-    @Column(nullable = false)
-    private String unit;
+    private Instant paidAt;
 }

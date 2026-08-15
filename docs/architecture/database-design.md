@@ -1,6 +1,6 @@
 ﻿# Database Design
 
-*Status: reflects the implemented codebase (2026-08-13).*
+*Status: reflects the implemented codebase (2026-08-14).*
 
 ## Principles (implemented)
 - Database per service (defaults in yml; shared `mediflow` DB via `.env` in local dev)
@@ -15,6 +15,6 @@
 - **medical-record-service:** medical_records (V1/V2: doctor_id, record_type, diagnosis, treatment_plan, version)
 - **billing-service:** invoices (V1/V2), invoice_items, payments (V3)
 - **notification-service:** notifications
-- **analytics-service:** metric_snapshots
+- **analytics-service:** processed_events, appointment_facts, invoice_facts, payment_facts, medical_record_facts (V2 replaced the V1 `metric_snapshots`, which was dropped)
 
 Cross-service references are UUIDs (Auth `User.id` ↔ business ids) with no FK constraints. See `../database-design.md` for column details.

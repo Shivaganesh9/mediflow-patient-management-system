@@ -1,6 +1,6 @@
 # MediFlow Database Design
 
-*Status: reflects the implemented codebase (2026-08-13). Schema is defined by Flyway migrations; `ddl-auto: validate`.*
+*Status: reflects the implemented codebase (2026-08-14). Schema is defined by Flyway migrations; `ddl-auto: validate`.*
 
 ## 1. Strategy
 
@@ -52,7 +52,13 @@
 
 ## 9. Analytics Service (analytics-service)
 
-`metric_snapshots`: `snapshot_id` UUID UNIQUE, `category`, `metric_name`, `value` DOUBLE PRECISION, `unit`. Indexes on `category`, `metric_name`.
+Read-model tables (V1 created `metric_snapshots`; V2 `DROP`ped it and added the fact tables below). The schema is scoped via `spring.flyway.locations: classpath:db/migration/analytics` because the service depends on the appointment/billing/medical-record jars (which bundle their own migrations).
+
+- `processed_events` (V2): `event_id` UUID PK (from Kafka `eventId`), `event_type`, `processed_at`. Global idempotency ledger — every consumed event must be recorded here.
+- `appointment_facts` (V2): `appointment_id` UUID UNIQUE, `source_event_id`, `patient_id`, `doctor_id`, `appointment_date` DATE, `start_time`, `status`, `appointment_type`, `version`, plus BaseEntity audit columns. One row per appointment, upserted as appointment events (created/updated/cancelled) arrive. Indexes on `appointment_date`, `(appointment_date, status)`, `patient_id`, `doctor_id`.
+- `invoice_facts` (V2): `invoice_id` UUID UNIQUE, `source_event_id`, `patient_id`, `appointment_id`, `invoice_number`, `status` (PENDING/PARTIALLY_PAID/PAID/CANCELLED), `currency`, `subtotal`, `tax_amount`, `discount`, `total_amount`, `paid_amount` (NUMERIC(19,2)), `invoice_date` TIMESTAMP, `version`. Upserted on `invoice.generated/cancelled.v1`. Indexes on `invoice_date`, `status`, `patient_id`.
+- `payment_facts` (V2): `source_event_id` UUID UNIQUE (no `paymentId` in the billing event payload, so the event id is the key), `invoice_id`, `patient_id`, `amount`, `currency`, `method`, `status` (COMPLETED/REFUNDED), `paid_at` TIMESTAMP. Insert-only. Indexes on `paid_at`, `status`, `invoice_id`.
+- `medical_record_facts` (V2): `record_id` UUID UNIQUE, `source_event_id`, `patient_id`, `doctor_id`, `encounter_date` DATE, `record_type`. Insert-only. Indexes on `encounter_date`, `patient_id`.
 
 ## 10. Relationships Overview
 
@@ -61,5 +67,5 @@
 
 ## 11. Tests
 
-- Unit/service tests use **H2 in PostgreSQL mode** (`create-drop`, Flyway disabled) for patient/doctor/auth/appointment/billing/analytics/notification services.
-- `medical-record-service` integration tests use **Testcontainers PostgreSQL 16** with Flyway enabled and `@DisabledWhenDockerUnavailable`-style guard (`disabledWithoutDocker = true`).
+- Unit/service tests use **H2 in PostgreSQL mode** (`create-drop`, Flyway disabled) for patient/doctor/auth/appointment/billing/notification services.
+- `analytics-service`, `medical-record-service`, and `notification-service` integration tests use **Testcontainers PostgreSQL 16** with Flyway enabled and a Docker guard (`disabledWithoutDocker = true`); analytics and notification tests also set the JVM default timezone to UTC (pgjdbc rejects non-UTC zones on PG16).

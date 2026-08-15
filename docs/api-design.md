@@ -1,6 +1,6 @@
 # MediFlow REST API
 
-*Status: reflects the implemented codebase (2026-08-13).*
+*Status: reflects the implemented codebase (2026-08-14).*
 
 ## 1. Conventions
 
@@ -87,11 +87,17 @@ Notifications are created by Kafka consumers (appointment/billing events), never
 
 ## 9. Analytics Service (8088) — `/api/v1/analytics`
 
+All analytics endpoints require an authenticated ADMIN or DOCTOR JWT (`hasAnyRole("ADMIN", "DOCTOR")`; PATIENT → 403, unauthenticated/invalid token → 401). Every endpoint accepts optional `from`/`to` query params (`yyyy-MM-dd`, LocalDate). When omitted, the range defaults to the current calendar month (`from = first of month`, `to = today`). Responses are typed DTOs wrapped in the shared `ApiResponse` envelope.
+
 | Method & Path | Auth | Description |
 |---|---|---|
-| POST `/snapshots` | none | Create metric snapshot |
-| GET `/snapshots` | none | List all |
-| GET `/snapshots/{snapshotId}` | none | Get by business id |
+| GET `/dashboard/summary` | ADMIN, DOCTOR | Totals for the range: appointments, completed/cancelled appointments, active patients, doctors, and revenue (invoiced, collected, refunded, outstanding) |
+| GET `/appointments` | ADMIN, DOCTOR | Appointment totals + `statusBreakdown` (count per status) + `dailyTrend` (count per appointment date) |
+| GET `/revenue` | ADMIN, DOCTOR | Revenue summary + `monthlyTrend` (per-month invoiced/collected/refunded, computed with `date_trunc` on invoice/payment timestamps) |
+| GET `/doctors` | ADMIN, DOCTOR | Doctor ranking: doctorId, appointment count, completed count (ordered by volume desc) |
+| GET `/patients` | ADMIN, DOCTOR | totalPatients, newPatients (first medical-record encounter within the range), mostActive list (top 10 by appointment count) |
+
+Revenue rules: `invoiced` excludes CANCELLED invoices (`sum_invoiced`); `collected` = sum of COMPLETED payments; `refunded` = sum of REFUNDED payments; `outstanding = invoiced − collected`. Data is served from the analytics read-model fact tables, which are populated by the Kafka consumer (see `docs/kafka-events.md`), not from live queries against the producer services.
 
 ## 10. API Gateway (8080)
 

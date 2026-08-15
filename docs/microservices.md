@@ -1,6 +1,6 @@
 # MediFlow Microservices
 
-*Status: reflects the implemented codebase (2026-08-13).*
+*Status: reflects the implemented codebase (2026-08-14).*
 
 ## Service Catalog (implemented)
 
@@ -12,7 +12,7 @@
 | appointment-service | 8084 | Scheduling | CRUD + cancel; time-range + overlap validation; status lifecycle (SCHEDULED/CONFIRMED → reschedulable); publishes appointment events |
 | doctor-service | 8085 | Provider management | Doctor profiles + search; availability slots + leaves; ownership enforcement (DOCTOR only own profile) |
 | billing-service | 8087 | Invoicing + payments | Invoice generation (items, tax, discount, totals), edit (PENDING only), cancel, record payment, refund; publishes invoice/payment events |
-| analytics-service | 8088 | Reporting | Metric snapshot CRUD (no aggregation logic yet) |
+| analytics-service | 8088 | Reporting | Event-driven analytics read model (appointment/invoice/payment/medical-record fact tables) fed by a Kafka consumer (8 topics, idempotent, retry + DLQ); dashboard summary, appointment stats, revenue, doctor ranking, patient activity (ADMIN/DOCTOR only) |
 | notification-service | 8089 | Notifications | In-app notifications materialized from Kafka appointment/billing events (idempotent, retry + DLQ); paginated list + unread count, mark-read; JWT-scoped reads |
 | medical-record-service | 8091 | Clinical records | Encounter records CRUD + search; doctor/patient ownership and scoped search; publishes medical-record events |
 

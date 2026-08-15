@@ -1,6 +1,6 @@
 # MediFlow Security
 
-*Status: reflects the implemented codebase (2026-08-13).*
+*Status: reflects the implemented codebase (2026-08-14).*
 
 ## 1. Authentication Model
 
@@ -30,7 +30,7 @@ Every protected domain service has its own `JwtProvider` + `JwtAuthenticationFil
 | billing | invoice/payment writes → ADMIN, BILLING_STAFF; reads → authenticated |
 | appointment | all → authenticated |
 | notification | all → authenticated; reads scoped to `recipient_id == uid`, mark-read owner-only (ADMIN bypass) |
-| analytics | **no Spring Security**; endpoints unauthenticated |
+| analytics | all `/api/v1/analytics/**` → ADMIN, DOCTOR (PATIENT → 403) |
 
 ## 5. Resource Ownership Enforcement
 

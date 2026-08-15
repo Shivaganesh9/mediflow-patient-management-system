@@ -1,6 +1,6 @@
 ﻿# ER Diagram
 
-*Status: reflects the implemented codebase (2026-08-13).*
+*Status: reflects the implemented codebase (2026-08-14).*
 
 ## Core Entities (by service)
 
@@ -11,7 +11,7 @@
 - **medical-record-service:** `medical_records`
 - **billing-service:** `invoices` —< `invoice_items`, `payments`
 - **notification-service:** `notifications`
-- **analytics-service:** `metric_snapshots`
+- **analytics-service:** `processed_events` (event id PK); fact tables `appointment_facts`, `invoice_facts`, `payment_facts`, `medical_record_facts` (V2; `metric_snapshots` from V1 dropped)
 
 ## Cross-service references (logical, no FKs)
 `patients.patient_id` / `doctors.doctor_id` = Auth `users.id`. `appointments.patient_id|doctor_id` and `medical_records.patient_id|doctor_id` reference those business ids. `invoices.patient_id` / `appointment_id` reference patient/appointment business ids.
