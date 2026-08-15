@@ -1,0 +1,14 @@
+.git/
+.gitignore
+.idea/
+*.iml
+.env
+.env.*
+target/classes/
+target/test-classes/
+target/generated-sources/
+target/generated-test-sources/
+target/maven-status/
+target/maven-archiver/
+target/surefire-reports/
+target/*.jar.original

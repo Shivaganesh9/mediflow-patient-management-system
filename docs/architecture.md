@@ -1,6 +1,6 @@
 # MediFlow Architecture
 
-*Status: reflects the implemented codebase (2026-08-13).*
+*Status: reflects the implemented codebase (2026-08-14).*
 
 ## 1. Overview
 
@@ -27,7 +27,7 @@ Root `pom.xml` (`com.mediflow:mediflow-parent`, Java 21, Spring Boot 3.5.0, Spri
 | `appointment-service` | 8084 | Appointment booking, rescheduling, cancellation + events |
 | `doctor-service` | 8085 | Doctor profiles, availability, leave + schedule |
 | `billing-service` | 8087 | Invoices, payments, refunds + events |
-| `analytics-service` | 8088 | Metric snapshots CRUD |
+| `analytics-service` | 8088 | Event-driven analytics read model (Kafka consumer → fact tables) + reporting APIs |
 | `notification-service` | 8089 | In-app notifications from Kafka events (idempotent, retry/DLQ) |
 | `medical-record-service` | 8091 | Clinical encounter records + events |
 
@@ -46,15 +46,16 @@ Each service follows `controller → service → repository → entity`, plus `d
 ## 6. Communication
 
 - **Synchronous:** REST over HTTP through the gateway; services are called directly by port in local dev.
-- **Asynchronous:** Kafka events published (no consumers yet): `appointment.*`, `medical-record.*`, `invoice.*`, `payment.*` (see `docs/kafka-events.md`).
+- **Asynchronous:** Kafka events published by appointment/medical-record/billing services and consumed by notification-service (appointment + billing) and analytics-service (appointment + billing + medical-record) (see `docs/kafka-events.md`).
 
 ## 7. Runtime Configuration
 
 - Required env vars: `JWT_SECRET`, `DB_PASSWORD`. Optional: `DB_URL`, `KAFKA_BOOTSTRAP_SERVERS`, `EUREKA_URL`, `CORS_ALLOWED_ORIGINS`, JWT expirations, per-service URLs.
 - Default per-service DBs (`patient_db`, `auth_db`, ...) are overridden by `.env` `DB_URL` to a single shared `mediflow` database in local dev.
+- Each of the 9 runnable services has a `Dockerfile` + `.dockerignore` (Temurin 21 JRE). Maven produces a plain jar (used by reactor consumers) plus an executable `<service>-1.0.0-exec.jar` via the Spring Boot `repackage` goal with an `exec` classifier; images copy the `-exec` jar. GitHub Actions (`.github/workflows/ci.yml`) verifies backend tests, frontend build, and all 9 images.
 
 ## 8. Known Limitations
 
-- Notification and analytics services have no Spring Security dependency; their endpoints are unauthenticated.
+- Analytics service's `medical-record.updated.v1` topic is not consumed (only the created topic); no outbox pattern on producers.
 - Admin/staff-created patient and doctor profiles accept an explicit Auth user UUID without a synchronous check that the user exists (see `docs/security.md`).
-- No service registry, config server, rate limiting, tracing, or consumer-side Kafka processing implemented.
+- No service registry, config server, rate limiting, tracing, or observability stack implemented.

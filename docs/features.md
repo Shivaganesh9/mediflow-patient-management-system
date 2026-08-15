@@ -1,6 +1,6 @@
 # MediFlow Implemented Features
 
-*Status: reflects the implemented codebase (2026-08-13). This is a feature inventory of what is actually delivered, not a roadmap.*
+*Status: reflects the implemented codebase (2026-08-15). This is a feature inventory of what is actually delivered, not a roadmap.*
 
 ## Backend (implemented)
 
@@ -40,15 +40,21 @@
 
 ### Notifications & Analytics
 - Notification records materialized from Kafka appointment/billing events (idempotent, retry + DLQ); paginated list + unread count, mark-read.
-- Metric snapshot CRUD.
+- Analytics read model materialized from Kafka appointment/billing/medical-record events (idempotent, retry + DLQ); dashboard summary, appointment stats, revenue, doctor ranking, and patient-activity endpoints (ADMIN/DOCTOR only).
 
 ## Frontend (prototype shell)
 - Vite + React 18 + TypeScript strict.
 - Pages: dashboard, patients, doctors, appointments, billing, notifications, analytics.
 - **Not wired to the backend:** no API client, no authentication, no routing; pages use local/hard-coded data.
 
+## Delivery & CI
+- Docker images for all 9 runnable services (Temurin 21 JRE, `mediflow/<service>`); Spring Boot `repackage` with an `exec` classifier produces executable `<service>-1.0.0-exec.jar` while the plain jar stays usable as a reactor dependency.
+- GitHub Actions (`.github/workflows/ci.yml`): backend `mvn -B -ntp verify`, frontend `npm ci` + `npm run build`, and a 9-service matrix that packages and docker-builds each image.
+- `docker-compose.yml` remains infrastructure-only (PostgreSQL + Kafka).
+
 ## Not yet implemented (intentional scope)
-- Analytics event processing (analytics-service has no Kafka consumer yet).
+- No consumer for `medical-record.updated.v1` (analytics consumes the created topic only).
 - Lab and pharmacy services (scaffolds only).
 - Service registry/config server, rate limiting, tracing, observability stack, audit logging.
+- Kubernetes/Terraform, image registry/CD deployment, backups/DR.
 - FHIR/HL7 interoperability, insurance claims, patient self-service portal.

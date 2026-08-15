@@ -285,9 +285,9 @@ List every required environment variable with a description. Mask secrets.
 - vite config:
   - [frontend/mediflow-ui/vite.config.ts](../frontend/mediflow-ui/vite.config.ts) provides Vite setup and a dev server port.
 - docker:
-  - Dockerfiles and compose assets exist under infrastructure and frontend folders, but full compose wiring is still partial.
+  - Every runnable backend service has a `Dockerfile` (Temurin 21 JRE) and `.dockerignore`; images are `mediflow/<service>` and copy the executable `<service>-*-exec.jar` (Spring Boot `repackage` with `exec` classifier). `docker-compose.yml` still wires only PostgreSQL and Kafka.
 - CI/CD:
-  - No production pipeline is configured yet.
+  - GitHub Actions (`.github/workflows/ci.yml`) verifies backend tests, frontend build, and builds all 9 service images. No deployment pipeline yet.
 
 ## 10. Important Business Logic
 - Authentication:
@@ -322,7 +322,7 @@ List every required environment variable with a description. Mask secrets.
 - Add real database migrations for all services.
 - Add frontend pages and API integration.
 - Add tests and integration coverage.
-- Add Docker Compose or full deployment orchestration.
+- Add Kubernetes/registry/CD deployment orchestration (service images and CI verification are in place).
 - Add logging, monitoring, and observability.
 - Add rate limiting, secrets handling, and security hardening.
 
@@ -494,6 +494,13 @@ Continue building the MediFlow Patient Management System from the current scaffo
 ### Still deferred (unchanged)
 - Kafka consumers (producers only), lab-service/pharmacy-service scaffolds, service registry/config server, production deployment assets.
 - Known limitation: admin/staff-created patient/doctor profiles accept a `userId` without synchronous validation of the Auth user (see `docs/security.md`).
+
+### Update (2026-08-15)
+- **Containerization:** added `Dockerfile` + `.dockerignore` for all 9 runnable services (api-gateway, auth, patient, doctor, appointment, billing, medical-record, notification, analytics). Images use Eclipse Temurin 21 JRE, `EXPOSE` matches each service port, and copy the executable Spring Boot jar.
+- **Executable jars:** each runnable service pom now binds `spring-boot-maven-plugin:repackage` with an `exec` classifier, producing `<service>-1.0.0-exec.jar` (executable) while keeping `<service>-1.0.0.jar` as the reactor dependency artifact for downstream consumers (notification/analytics). Verified by `java -jar` on the built jar and by container spot-checks.
+- **CI:** added `.github/workflows/ci.yml` — backend `mvn -B -ntp verify`, frontend `npm ci` + `npm run build`, and a 9-service matrix that packages each service and builds its Docker image (`mediflow/<service>:ci`). `tsconfig.tsbuildinfo` added to `.gitignore` (frontend build artifact).
+- **Verified locally:** full `mvn verify` green, frontend production build succeeded, and all 9 Docker images built and spot-checked (executable `app.jar` present).
+- **Not changed:** business logic, tests, Kafka payloads/consumers, Flyway migrations, security rules, gateway routes, or `docker-compose.yml` (still infra-only). No commit/push performed.
 
 ### Accurate references
 For current, code-verified documentation see `docs/architecture.md`, `docs/security.md`, `docs/api-design.md`, `docs/database-design.md`, `docs/kafka-events.md`, `docs/microservices.md`, `docs/features.md`.

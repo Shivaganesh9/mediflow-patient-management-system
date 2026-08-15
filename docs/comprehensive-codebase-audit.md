@@ -169,7 +169,7 @@ The existing Java 21 build was checked during the audit workflow and failed befo
 ### Reliability and performance debt
 
 - `findAll()` is used for patient retrieval without visible pagination. Patient and analytics lists should use cursor/page requests and bounded response sizes.
-- No visible idempotency strategy exists for appointment creation or billing operations. Add request idempotency keys. Kafka consumers: notification-service deduplicates by `source_event_id` (unique index) and retries via `DefaultErrorHandler` → DLQ; analytics has no consumer yet.
+- No visible idempotency strategy exists for appointment creation or billing operations. Add request idempotency keys. Kafka consumers: notification-service deduplicates by `source_event_id` (unique index) and retries via `DefaultErrorHandler` → DLQ; analytics-service deduplicates via the global `processed_events` ledger with the same retry/DLQ policy.
 - No visible retry, dead-letter, timeout, circuit-breaker, or backpressure policy is established for service and Kafka interactions.
 - No health/readiness probes, resource limits, backup policy, or database connection-pool policy was found in the executable deployment definitions.
 - Shared-library coupling can cause broad blast radius: common response, security, and exception changes affect every service. Version and test the library as an explicit internal platform dependency.
@@ -325,14 +325,29 @@ MediFlow has a sensible domain direction and a useful initial service decomposit
 - **P1 `.env.example`:** added with masked/required variables; `JWT_SECRET` and `DB_PASSWORD` have no defaults (fail fast).
 - **P1 migrations:** every active service uses Flyway migrations with `ddl-auto: validate` (no `update`).
 - **P1 auth propagation:** per-service JWT filters enforce authentication; RBAC endpoint rules and resource-ownership checks (patient/doctor/medical-record) enforce authorization.
-- **P1 testcontainers:** medical-record-service and notification-service integration tests run against Testcontainers PostgreSQL 16; other services use H2 (PostgreSQL mode).
+- **P1 testcontainers:** analytics, medical-record, and notification integration tests run against Testcontainers PostgreSQL 16; other services use H2 (PostgreSQL mode).
 - **P1 date validation:** `@DateTimeFormat`/typed DTOs and a `DateTimeParseException → 400` mapping are handled by `GlobalExceptionHandler`.
-- **Doctor, billing, notification, analytics:** now implemented domains (not scaffolds); appointment service has conflict detection and event publishing; notification-service consumes appointment/billing events (idempotent, retry/DLQ).
+- **Doctor, billing, notification, analytics:** now implemented domains (not scaffolds); appointment service has conflict detection and event publishing; notification-service consumes appointment/billing events and analytics-service consumes appointment/billing/medical-record events (both idempotent, retry/DLQ).
 
 ### Still outstanding (unchanged)
 - Frontend not API-connected (prototype shell; no auth, routing, or API client).
-- No Kafka consumers, outbox, DLQs, or retry policy (producers only).
+- No outbox pattern or retry policy for producers; analytics does not consume `medical-record.updated.v1`.
 - No service registry/config server; Eureka configured but no server in repo.
-- No production deployment assets, monitoring stack, CI/CD, or rate limiting.
-- Notification and analytics services are unauthenticated (no Spring Security).
+- No production deployment (Kubernetes/registry/CD), monitoring stack, or rate limiting. Container images and CI verification were added 2026-08-15 (see below).
 - Admin/staff-created patient/doctor profiles do not synchronously validate the referenced Auth user.
+
+---
+
+## Post-Audit Reconciliation (2026-08-15)
+
+> Containerization and CI items from the audit and the 2026-08-13 reconciliation.
+
+### Resolved since 2026-08-13
+- **P1 executable Spring Boot jars:** every runnable service now applies `spring-boot-maven-plugin` `repackage` with an `exec` classifier, producing an executable `<service>-1.0.0-exec.jar` while keeping the plain `<service>-1.0.0.jar` as the reactor dependency artifact (required by the notification/analytics consumers).
+- **P2 CI workflow:** `.github/workflows/ci.yml` runs `mvn -B -ntp verify` (backend incl. Testcontainers), frontend `npm ci` + `npm run build`, and a 9-service matrix that packages and docker-builds each image (`mediflow/<service>:ci`).
+- **Docker images:** `Dockerfile` + `.dockerignore` added for all 9 runnable services (Temurin 21 JRE, `EXPOSE` matches service ports); all 9 images built and spot-checked locally (executable jar confirmed inside the image). `lab-service`/`pharmacy-service` scaffolds remain uncontainerized.
+
+### Still outstanding (unchanged)
+- Maven Wrapper not added (CI uses runner-provided Maven).
+- `docker-compose.yml` still runs only PostgreSQL + Kafka; application containers are run individually.
+- Kubernetes/Terraform, image registry/CD deployment, monitoring stack, rate limiting, and a production frontend static image.

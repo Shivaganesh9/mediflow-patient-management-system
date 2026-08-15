@@ -1,6 +1,6 @@
 ﻿# Deployment Diagram
 
-*Status: reflects the implemented codebase (2026-08-13).*
+*Status: reflects the implemented codebase (2026-08-15).*
 
 ## Runtime View (local dev)
 - React/Vite frontend (port 5173) — static dev server, not API-connected yet
@@ -9,5 +9,10 @@
 - PostgreSQL 16 (5432) and Kafka 4.0 (9092) via `docker compose up -d`
 - Configuration via `.env` (required: `JWT_SECRET`, `DB_PASSWORD`)
 
+## Container images
+- Each of the 9 runnable services has a `Dockerfile` (Temurin 21 JRE) and `.dockerignore`; images are named `mediflow/<service>` and copy the executable `<service>-*-exec.jar` (Spring Boot `repackage` with `exec` classifier).
+- `docker-compose.yml` still runs only PostgreSQL + Kafka; application containers are run individually (`docker run --env-file .env -p <port>:<port> mediflow/<service>`).
+- CI (`.github/workflows/ci.yml`) verifies the backend, frontend, and all 9 images on every push/PR.
+
 ## Not delivered
-- Kubernetes/container images, managed clusters, Prometheus/Grafana monitoring, TLS termination, load balancer, backups/DR.
+- Kubernetes/managed clusters, Prometheus/Grafana monitoring, TLS termination, load balancer, backups/DR, image registry/CD deployment.

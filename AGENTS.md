@@ -21,6 +21,11 @@ Enterprise patient-management platform: Spring Boot 3 microservices + React/TS +
 - Frontend: `cd frontend/mediflow-ui && npm run dev` (Vite, port 5173); build: `npm run build`. No lint/test scripts exist.
 - Infra: `docker compose up -d` (Postgres 16 + Kafka 3.7). Requires `.env` copied from `.env.example`; compose aborts if `POSTGRES_*` vars are missing.
 - Runtime env: `JWT_SECRET` and `DB_PASSWORD` have NO defaults — services fail to start without them.
+- Build a service image: `mvn -DskipTests package` then `docker build -t mediflow/<service> backend/<service>` (all 9 runnable services have `Dockerfile` + `.dockerignore`).
+- CI: `.github/workflows/ci.yml` runs `mvn -B -ntp verify`, frontend `npm ci` + `npm run build`, and builds all 9 images.
+
+## Build/packaging notes
+- `spring-boot-maven-plugin` `repackage` is bound with an `exec` classifier in every runnable service pom: Maven produces a plain `<service>-1.0.0.jar` (used as a reactor dependency by consumer services) plus an executable `<service>-1.0.0-exec.jar`; Dockerfiles COPY the `-exec` jar. Do NOT remove the classifier — consumers compile against the plain jar.
 
 ## Architecture / layout
 - Maven reactor rooted at root `pom.xml` (`com.mediflow:mediflow-parent`); modules under `backend/`.
