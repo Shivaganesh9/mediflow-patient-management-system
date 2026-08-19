@@ -10,7 +10,7 @@
 
 ### Infrastructure
 `docker compose up -d` starts:
-- **PostgreSQL 16** on `5432` (`POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD` from `.env`; compose aborts if missing).
+- **PostgreSQL 16** on `5432` (`POSTGRES_USER`/`POSTGRES_PASSWORD` from `.env`; compose aborts if missing). On first boot, `infrastructure/docker/postgres/init-databases.sql` creates the per-service databases.
 - **Kafka 4.0.0** (KRaft single node) on `9092`.
 
 Copy `.env.example` → `.env` and set `JWT_SECRET` and `DB_PASSWORD` (no defaults exist — services fail without them).
@@ -18,8 +18,8 @@ Copy `.env.example` → `.env` and set `JWT_SECRET` and `DB_PASSWORD` (no defaul
 ### Build & Run
 - Build all backend modules: `mvn -DskipTests package`
 - Run one service with reactor deps: `mvn -pl backend/patient-service -am spring-boot:run`
-- Tests (no external infra; H2 except medical-record Testcontainers): `mvn -pl backend/patient-service test`
-- Frontend: `cd frontend/mediflow-ui && npm run dev` (port 5173); build `npm run build` (no lint/test scripts).
+- Tests (H2 PostgreSQL mode; Testcontainers PostgreSQL 16 for analytics, medical-record, and notification): `mvn -pl backend/patient-service test`
+- Frontend: `cd frontend/mediflow-ui && npm run dev` (Vite dev server, port 3000); build `npm run build` (no lint/test scripts). Services default their CORS allow-list to `http://localhost:3000` (override with `CORS_ALLOWED_ORIGINS`).
 
 ## Runtime Topology
 

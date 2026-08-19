@@ -3,7 +3,7 @@
 *Status: reflects the implemented codebase (2026-08-14).*
 
 ## Principles (implemented)
-- Database per service (defaults in yml; shared `mediflow` DB via `.env` in local dev)
+- Database per service (defaults in yml; checked-in `.env` does not set `DB_URL`, so per-service DBs are used — setting `DB_URL` to a shared `mediflow` DB is optional)
 - PostgreSQL 16; schema exclusively via Flyway migrations; `ddl-auto: validate`
 - All tables inherit audit columns + soft delete (`created_at/updated_at/created_by/updated_by/deleted_at`) from `BaseEntity`; UUID `id` PK plus a unique business UUID column
 

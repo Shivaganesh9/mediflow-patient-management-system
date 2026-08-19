@@ -3,7 +3,7 @@
 *Status: reflects the implemented codebase (2026-08-15).*
 
 ## Runtime View (local dev)
-- React/Vite frontend (port 5173) — static dev server, not API-connected yet
+- React/Vite frontend (port 3000) — dev server; production build served statically from `dist/`; calls the gateway at `http://localhost:8080`
 - API Gateway (8080) — exposes `/api/v1/**`, routes by path to services
 - Backend services (8081/8083/8084/8085/8087/8088/8089/8091) — internal network
 - PostgreSQL 16 (5432) and Kafka 4.0 (9092) via `docker compose up -d`

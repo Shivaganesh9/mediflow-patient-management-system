@@ -150,6 +150,36 @@ class PatientServiceTest {
     }
 
     @Test
+    void searchPatientsByPatientReturnsOnlyOwnProfile() {
+        UUID selfId = UUID.randomUUID();
+        Patient self = new Patient();
+        PatientResponse selfResponse = PatientResponse.builder().patientId(selfId).build();
+        when(currentUser.hasRole("PATIENT")).thenReturn(true);
+        when(currentUser.requireCurrentUserId()).thenReturn(selfId);
+        when(patientRepository.findByPatientIdAndDeletedAtIsNull(selfId)).thenReturn(Optional.of(self));
+        when(patientMapper.toResponse(self)).thenReturn(selfResponse);
+
+        var result = patientService.searchPatients("someone-else", PageRequest.of(0, 20));
+
+        assertEquals(1, result.getTotalElements());
+        assertEquals(selfResponse, result.getContent().get(0));
+        verify(patientRepository, never()).searchActivePatients(any(), any());
+    }
+
+    @Test
+    void searchPatientsByPatientWithoutProfileReturnsEmptyPage() {
+        UUID selfId = UUID.randomUUID();
+        when(currentUser.hasRole("PATIENT")).thenReturn(true);
+        when(currentUser.requireCurrentUserId()).thenReturn(selfId);
+        when(patientRepository.findByPatientIdAndDeletedAtIsNull(selfId)).thenReturn(Optional.empty());
+
+        var result = patientService.searchPatients("alice", PageRequest.of(0, 20));
+
+        assertEquals(0, result.getTotalElements());
+        verify(patientRepository, never()).searchActivePatients(any(), any());
+    }
+
+    @Test
     void deletePatientSoftDeletesActivePatient() {
         UUID patientId = UUID.randomUUID();
         Patient patient = new Patient();

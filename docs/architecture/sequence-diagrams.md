@@ -1,8 +1,13 @@
 ﻿# Sequence Diagrams
 
 ## Patient Registration
-1. User submits registration form.
-2. Gateway validates request and forwards to Auth Service.
-3. Patient Service persists the patient profile.
-4. Kafka emits patient.created.
-5. Notification Service sends welcome communication.
+1. User submits registration form to the gateway → auth-service.
+2. auth-service creates the user (role PATIENT by default) and returns JWT access + refresh tokens.
+3. No `patient.created` event is emitted — patient-service publishes no Kafka events.
+4. If the patient later books an appointment, `appointment.created.v1` is published and notification-service creates an in-app notification for the patient (recipient = payload `patientId`).
+
+## Appointment Booking → Notification/Analytics
+1. Client POSTs `/api/v1/appointments` (JWT) → appointment-service validates overlap and saves (SCHEDULED).
+2. appointment-service publishes `appointment.created.v1`.
+3. notification-service consumes it → creates an in-app notification for the patient.
+4. analytics-service consumes it → upserts `appointment_facts` (+ `processed_events` ledger).

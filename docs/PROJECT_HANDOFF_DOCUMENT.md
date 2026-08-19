@@ -488,12 +488,17 @@ Continue building the MediFlow Patient Management System from the current scaffo
 - **Migrations:** every active service now has Flyway migrations (V1–V3) with `ddl-auto: validate`.
 - **Gateway:** routes configured in `application.yml` (direct URLs, env-overridable) with global CORS.
 - **Auth:** roles seeded (PATIENT/DOCTOR/ADMIN); refresh-token rotation; `/me`, `/logout`.
-- **Tests:** unit + controller-security + integration (H2 PostgreSQL mode; Testcontainers for medical-record-service).
-- **Frontend:** still a prototype shell (no API client/auth/routing).
+- **Tests:** unit + controller-security + integration (H2 PostgreSQL mode; Testcontainers for analytics/medical-record/notification).
+- **Frontend:** still a prototype shell at this point (superseded — see the 2026-08-16 update below).
 
 ### Still deferred (unchanged)
-- Kafka consumers (producers only), lab-service/pharmacy-service scaffolds, service registry/config server, production deployment assets.
+- lab-service/pharmacy-service scaffolds, service registry/config server, production deployment assets.
 - Known limitation: admin/staff-created patient/doctor profiles accept a `userId` without synchronous validation of the Auth user (see `docs/security.md`).
+
+### Update (2026-08-16)
+- **Frontend integration complete:** `frontend/mediflow-ui` is now a fully integrated SPA — API client (`src/api/client.ts`) with JWT access/refresh rotation on 401, `AuthContext`, `ProtectedRoute`/`RoleRoute` role-based routing (react-router-dom 6), and 12 pages wired to `/api/v1/**` through the gateway (login, role-aware dashboard, patients + detail, doctors + detail with availability/leaves, appointments create/reschedule/cancel, medical records create/edit, billing + invoice detail with pay/refund/cancel, notifications with unread count/mark-read, analytics). Dev server port is 3000; base URL `VITE_API_BASE_URL ?? http://localhost:8080`.
+- **Kafka consumers delivered (2026-08-15-era updates above recorded producers only):** notification-service (appointment created/updated/cancelled + invoice generated/payment confirmed; idempotent via `source_event_id`, retry/DLQ) and analytics-service (all appointment/billing topics + medical-record.created; idempotent via `processed_events` ledger, retry/DLQ) were implemented and verified.
+- **Not changed:** business logic, tests, Kafka payloads, Flyway migrations, security rules, gateway routes, or `docker-compose.yml`. No commit/push performed.
 
 ### Update (2026-08-15)
 - **Containerization:** added `Dockerfile` + `.dockerignore` for all 9 runnable services (api-gateway, auth, patient, doctor, appointment, billing, medical-record, notification, analytics). Images use Eclipse Temurin 21 JRE, `EXPOSE` matches each service port, and copy the executable Spring Boot jar.

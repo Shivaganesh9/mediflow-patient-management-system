@@ -12,6 +12,7 @@ import com.mediflow.billing.entity.PaymentStatus;
 import com.mediflow.billing.event.BillingEventPublisher;
 import com.mediflow.billing.repository.InvoiceRepository;
 import com.mediflow.billing.repository.PaymentRepository;
+import com.mediflow.billing.security.AccessControlService;
 import com.mediflow.common.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -38,6 +39,7 @@ public class InvoiceService {
     private final InvoiceRepository invoiceRepository;
     private final PaymentRepository paymentRepository;
     private final BillingEventPublisher eventPublisher;
+    private final AccessControlService accessControl;
 
     @Transactional
     public Invoice createInvoice(CreateInvoiceRequest request) {
@@ -66,13 +68,15 @@ public class InvoiceService {
 
     @Transactional(readOnly = true)
     public Page<Invoice> searchInvoices(InvoiceStatus status, UUID patientId, UUID appointmentId, Pageable pageable) {
-        return invoiceRepository.search(status, patientId, appointmentId, pageable);
+        UUID scopedPatientId = accessControl.scopedPatientId(patientId);
+        return invoiceRepository.search(status, scopedPatientId, appointmentId, pageable);
     }
 
     @Transactional(readOnly = true)
     public Invoice getInvoice(UUID invoiceId) {
         Invoice invoice = invoiceRepository.findByInvoiceId(invoiceId)
                 .orElseThrow(() -> new ResourceNotFoundException("Invoice not found with id: " + invoiceId));
+        accessControl.assertCanRead(invoice);
         invoice.getItems().size();
         invoice.getPayments().size();
         return invoice;

@@ -30,7 +30,7 @@ jwt:
   secret: ${JWT_SECRET}
 
 cors:
-  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
 
 eureka:
   client:
@@ -42,3 +42,9 @@ management:
     web:
       exposure:
         include: health,info
+
+springdoc:
+  info:
+    title: MediFlow Patient Service API
+    description: Patient profile management APIs (CRUD, search, ownership-scoped access).
+    version: 1.0

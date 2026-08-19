@@ -1,6 +1,9 @@
 package com.mediflow.appointment.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mediflow.appointment.event.AppointmentEventPublisher;
+import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,6 +14,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
@@ -18,6 +22,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -32,31 +37,28 @@ class AppointmentControllerIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
     @MockBean
     private AppointmentEventPublisher eventPublisher;
 
-    private String token;
+    private UUID doctorId;
+    private String doctorToken;
 
     @BeforeEach
     void setUp() {
-        token = Jwts.builder()
-                .subject("doctor1")
-                .claim("roles", List.of("DOCTOR"))
-                .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + 600_000))
-                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256)
-                .compact();
+        doctorId = UUID.randomUUID();
+        doctorToken = token("doctor1", doctorId, List.of("DOCTOR"));
     }
 
     @Test
     void createAppointmentReturnsCreated() throws Exception {
-        String payload = "{\"patientId\":\"11111111-1111-1111-1111-111111111111\","
-                + "\"doctorId\":\"22222222-2222-2222-2222-222222222222\","
-                + "\"startTime\":\"2030-01-01T10:00:00\",\"endTime\":\"2030-01-01T11:00:00\","
-                + "\"reason\":\"Checkup\"}";
+        UUID patientId = UUID.randomUUID();
+        String payload = appointmentPayload(patientId, doctorId, "2030-01-01T10:00:00", "2030-01-01T11:00:00");
 
         mockMvc.perform(post("/api/v1/appointments")
-                        .header("Authorization", "Bearer " + token)
+                        .header("Authorization", "Bearer " + doctorToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isCreated())
@@ -66,13 +68,10 @@ class AppointmentControllerIntegrationTest {
 
     @Test
     void createAppointmentRejectsEndBeforeStart() throws Exception {
-        String payload = "{\"patientId\":\"11111111-1111-1111-1111-111111111111\","
-                + "\"doctorId\":\"22222222-2222-2222-2222-222222222222\","
-                + "\"startTime\":\"2030-01-01T11:00:00\",\"endTime\":\"2030-01-01T10:00:00\","
-                + "\"reason\":\"Checkup\"}";
+        String payload = appointmentPayload(UUID.randomUUID(), doctorId, "2030-01-01T11:00:00", "2030-01-01T10:00:00");
 
         mockMvc.perform(post("/api/v1/appointments")
-                        .header("Authorization", "Bearer " + token)
+                        .header("Authorization", "Bearer " + doctorToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isBadRequest());
@@ -83,16 +82,54 @@ class AppointmentControllerIntegrationTest {
         String payload = "{\"reason\":\"Checkup\"}";
 
         mockMvc.perform(post("/api/v1/appointments")
-                        .header("Authorization", "Bearer " + token)
+                        .header("Authorization", "Bearer " + doctorToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
+    void createAppointmentByPatientUsesOwnPatientId() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String patientToken = token("patient1", patientId, List.of("PATIENT"));
+        String payload = appointmentPayload(patientId, doctorId, "2030-01-01T10:00:00", "2030-01-01T11:00:00");
+
+        mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + patientToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.patientId").value(patientId.toString()));
+    }
+
+    @Test
+    void createAppointmentByPatientRejectsOtherPatientId() throws Exception {
+        String patientToken = token("patient1", UUID.randomUUID(), List.of("PATIENT"));
+        String payload = appointmentPayload(UUID.randomUUID(), doctorId, "2030-01-01T10:00:00", "2030-01-01T11:00:00");
+
+        mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + patientToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createAppointmentByDoctorRejectsOtherDoctorId() throws Exception {
+        UUID otherDoctorId = UUID.randomUUID();
+        String payload = appointmentPayload(UUID.randomUUID(), otherDoctorId, "2030-01-01T10:00:00", "2030-01-01T11:00:00");
+
+        mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void getMissingAppointmentReturnsNotFound() throws Exception {
         mockMvc.perform(get("/api/v1/appointments/" + UUID.randomUUID())
-                        .header("Authorization", "Bearer " + token))
+                        .header("Authorization", "Bearer " + doctorToken))
                 .andExpect(status().isNotFound());
     }
 
@@ -101,9 +138,168 @@ class AppointmentControllerIntegrationTest {
         String payload = "{\"startTime\":\"2030-01-01T10:00:00\",\"endTime\":\"2030-01-01T11:00:00\"}";
 
         mockMvc.perform(put("/api/v1/appointments/" + UUID.randomUUID())
-                        .header("Authorization", "Bearer " + token)
+                        .header("Authorization", "Bearer " + doctorToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void getAppointmentByOwnerPatient() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String appointmentId = createAppointment(patientId, UUID.randomUUID(), adminToken());
+
+        String patientToken = token("patient1", patientId, List.of("PATIENT"));
+        mockMvc.perform(get("/api/v1/appointments/" + appointmentId)
+                        .header("Authorization", "Bearer " + patientToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.appointmentId").value(appointmentId));
+    }
+
+    @Test
+    void getAppointmentDeniedForOtherPatient() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String appointmentId = createAppointment(patientId, UUID.randomUUID(), adminToken());
+
+        String otherPatientToken = token("patient2", UUID.randomUUID(), List.of("PATIENT"));
+        mockMvc.perform(get("/api/v1/appointments/" + appointmentId)
+                        .header("Authorization", "Bearer " + otherPatientToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getAppointmentDeniedForUnrelatedDoctor() throws Exception {
+        UUID appointmentDoctorId = UUID.randomUUID();
+        String appointmentId = createAppointment(UUID.randomUUID(), appointmentDoctorId, adminToken());
+
+        String otherDoctorToken = token("doctor2", UUID.randomUUID(), List.of("DOCTOR"));
+        mockMvc.perform(get("/api/v1/appointments/" + appointmentId)
+                        .header("Authorization", "Bearer " + otherDoctorToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getAppointmentByAdmin() throws Exception {
+        String appointmentId = createAppointment(UUID.randomUUID(), UUID.randomUUID(), adminToken());
+
+        mockMvc.perform(get("/api/v1/appointments/" + appointmentId)
+                        .header("Authorization", "Bearer " + adminToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.appointmentId").value(appointmentId));
+    }
+
+    @Test
+    void getAppointmentByStaff() throws Exception {
+        String appointmentId = createAppointment(UUID.randomUUID(), UUID.randomUUID(), adminToken());
+
+        String staffToken = token("nurse1", UUID.randomUUID(), List.of("NURSE"));
+        mockMvc.perform(get("/api/v1/appointments/" + appointmentId)
+                        .header("Authorization", "Bearer " + staffToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.appointmentId").value(appointmentId));
+    }
+
+    @Test
+    void updateAppointmentDeniedForOtherDoctor() throws Exception {
+        UUID appointmentDoctorId = UUID.randomUUID();
+        String appointmentId = createAppointment(UUID.randomUUID(), appointmentDoctorId, adminToken());
+
+        String otherDoctorToken = token("doctor2", UUID.randomUUID(), List.of("DOCTOR"));
+        String payload = "{\"startTime\":\"2030-02-01T10:00:00\",\"endTime\":\"2030-02-01T11:00:00\"}";
+
+        mockMvc.perform(put("/api/v1/appointments/" + appointmentId)
+                        .header("Authorization", "Bearer " + otherDoctorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void cancelAppointmentDeniedForOtherPatient() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String appointmentId = createAppointment(patientId, UUID.randomUUID(), adminToken());
+
+        String otherPatientToken = token("patient2", UUID.randomUUID(), List.of("PATIENT"));
+        mockMvc.perform(patch("/api/v1/appointments/" + appointmentId + "/cancel")
+                        .header("Authorization", "Bearer " + otherPatientToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void searchAppointmentsScopedToPatient() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        createAppointment(patientId, UUID.randomUUID(), adminToken());
+        createAppointment(UUID.randomUUID(), UUID.randomUUID(), adminToken());
+        String patientToken = token("patient1", patientId, List.of("PATIENT"));
+
+        mockMvc.perform(get("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + patientToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1));
+    }
+
+    @Test
+    void searchAppointmentsForcesOwnScopeForPatient() throws Exception {
+        String patientToken = token("patient1", UUID.randomUUID(), List.of("PATIENT"));
+
+        mockMvc.perform(get("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + patientToken)
+                        .param("patientId", UUID.randomUUID().toString()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void searchAppointmentsScopedToDoctor() throws Exception {
+        UUID doctorA = UUID.randomUUID();
+        UUID doctorB = UUID.randomUUID();
+        createAppointment(UUID.randomUUID(), doctorA, adminToken());
+        String doctorAToken = token("doctorA", doctorA, List.of("DOCTOR"));
+        String doctorBToken = token("doctorB", doctorB, List.of("DOCTOR"));
+
+        mockMvc.perform(get("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + doctorBToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(0));
+
+        mockMvc.perform(get("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + doctorAToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1));
+    }
+
+    private String createAppointment(UUID patientId, UUID doctorId, String token) throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(appointmentPayload(patientId, doctorId,
+                                "2030-01-01T10:00:00", "2030-01-01T11:00:00")))
+                .andExpect(status().isCreated())
+                .andReturn();
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        return body.at("/data/appointmentId").asText();
+    }
+
+    private String appointmentPayload(UUID patientId, UUID doctorId, String startTime, String endTime) {
+        return "{\"patientId\":\"" + patientId + "\","
+                + "\"doctorId\":\"" + doctorId + "\","
+                + "\"startTime\":\"" + startTime + "\",\"endTime\":\"" + endTime + "\","
+                + "\"reason\":\"Checkup\"}";
+    }
+
+    private String adminToken() {
+        return token("admin", UUID.randomUUID(), List.of("ADMIN"));
+    }
+
+    private String token(String subject, UUID uid, List<String> roles) {
+        JwtBuilder builder = Jwts.builder()
+                .subject(subject)
+                .claim("roles", roles)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 600_000))
+                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256);
+        if (uid != null) {
+            builder = builder.claim("uid", uid.toString());
+        }
+        return builder.compact();
     }
 }

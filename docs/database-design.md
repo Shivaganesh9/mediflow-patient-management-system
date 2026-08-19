@@ -4,7 +4,7 @@
 
 ## 1. Strategy
 
-- Each service owns its tables (per-service default DBs in yml; `.env` `DB_URL` points all services at one shared `mediflow` DB in local dev).
+- Each service owns its tables (per-service default DBs in yml; the checked-in `.env` does not set `DB_URL`, so per-service DBs are used by default — setting `DB_URL` points all services at one shared `mediflow` DB if desired).
 - Migrations: `V1__*.sql` (and `V2`/`V3` where the schema evolved) under each service's `src/main/resources/db/migration/`.
 - Every table inherits audit columns from `common-library` `BaseEntity`: `created_at`, `updated_at`, `created_by`, `updated_by`, `deleted_at` (soft delete), plus a UUID surrogate `id` primary key.
 - Business entities expose a second immutable UUID business id (`patient_id`, `doctor_id`, `appointment_id`, ...) that is unique and stable.
@@ -48,7 +48,7 @@
 
 ## 8. Notification Service (notification-service)
 
-`notifications` (V1, V2): `notification_id` UUID UNIQUE, `recipient_id` UUID, `notification_type` (APPOINTMENT_CREATED/APPOINTMENT_UPDATED/APPOINTMENT_CANCELLED/INVOICE_GENERATED/PAYMENT_CONFIRMED), `channel` (IN_APP), `subject`, `message` (4000), `read_at` (NULL = unread), `source_event_id` UUID (unique, from Kafka eventId, idempotency key), `created_at`, `updated_at`. V1 defined a `status` column dropped in V2. Index on `recipient_id`.
+`notifications` (V1, V2): `notification_id` UUID UNIQUE, `recipient_id` UUID, `notification_type` (APPOINTMENT_CREATED/APPOINTMENT_UPDATED/APPOINTMENT_CANCELLED/INVOICE_GENERATED/PAYMENT_CONFIRMED), `channel` VARCHAR (dev seed writes `email`; the app treats it as a free-form channel label), `subject`, `message` (4000), `read_at` (NULL = unread), `source_event_id` UUID (unique, from Kafka eventId, idempotency key), `created_at`, `updated_at`. V1 defined a `status` column dropped in V2. Index on `recipient_id`.
 
 ## 9. Analytics Service (analytics-service)
 

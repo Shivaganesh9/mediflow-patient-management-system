@@ -25,7 +25,7 @@
 
 - Service-layer unit tests with Mockito + JUnit 5.
 - Controller security tests verifying role/ownership rules (MockMvc + signed JWTs).
-- Integration tests: H2 (PostgreSQL mode, `create-drop`, Flyway off) for most services; Testcontainers PostgreSQL 16 for medical-record-service (`@DisabledWithoutDocker`).
+- Integration tests: H2 (PostgreSQL mode, `create-drop`, Flyway off) for most services; Testcontainers PostgreSQL 16 with Flyway enabled for analytics-service, medical-record-service, and notification-service (`@DisabledWithoutDocker`; analytics/notification also force the JVM default timezone to UTC).
 - Command: `mvn -pl backend/<service> test`.
 
 ## Git

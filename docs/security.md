@@ -10,7 +10,7 @@
 - Passwords hashed with **BCrypt**.
 - Refresh tokens are stored in `refresh_tokens` (token, expiry_date, revoked) and rotated: each refresh revokes the previous token. Logout deletes all refresh tokens for the user.
 - Auth security: public endpoints `/api/v1/auth/register`, `/login`, `/refresh`; `/me` and `/logout` require a valid token. Accounts with status != `ACTIVE` are disabled via `CustomUserDetailsService`.
-- Public in every service: `/actuator/health`, `/actuator/info`, `/swagger-ui/**`, `/v3/api-docs/**`.
+- Public in every service: `/actuator/health`, `/swagger-ui/**`, `/v3/api-docs/**` (auth-service additionally permits only `/actuator/health`; it does not expose `/actuator/info`).
 
 ## 2. Stateless Service Validation
 
@@ -18,19 +18,21 @@ Every protected domain service has its own `JwtProvider` + `JwtAuthenticationFil
 
 ## 3. Role Model
 
-`common-library` `UserRole` enum: `PATIENT`, `DOCTOR`, `NURSE`, `ADMIN`, `BILLING_STAFF`, `SUPPORT`. The auth migration seeds `PATIENT`, `DOCTOR`, `ADMIN` role rows (fixed UUIDs). Registration defaults to `PATIENT` when no role is supplied.
+`common-library` `UserRole` enum: `PATIENT`, `DOCTOR`, `NURSE`, `ADMIN`, `BILLING_STAFF`, `SUPPORT`. The auth migration seeds `PATIENT`, `DOCTOR`, `ADMIN` role rows (fixed UUIDs). Registration always assigns `PATIENT` — the client-supplied `role` field is ignored (previously, supplying `role=ADMIN`/`DOCTOR` on registration escalated the new account to a privileged role; fixed 2026-08-18). Privileged roles are granted only by the seeders or an operator directly in the DB.
 
 ## 4. Endpoint Authorization (per service)
 
 | Service | Rules (from `SecurityConfig`) |
 |---|---|
-| patient | DELETE `/api/v1/patients/**` → ADMIN; POST → ADMIN, PATIENT, DOCTOR, STAFF; PUT → ADMIN, DOCTOR, STAFF; GET → authenticated |
+| patient | DELETE `/api/v1/patients/**` → ADMIN; POST → ADMIN, PATIENT, DOCTOR, STAFF; PUT → ADMIN, DOCTOR, STAFF; GET → authenticated (PATIENT list/search scoped to own profile) |
 | doctor | POST/PUT `/api/v1/doctors/**` and schedule POST → ADMIN, STAFF, DOCTOR; GET → authenticated |
 | medical-record | POST `/api/v1/medical-records` and PUT `/api/v1/medical-records/*` → ADMIN, DOCTOR; GET → authenticated |
-| billing | invoice/payment writes → ADMIN, BILLING_STAFF; reads → authenticated |
-| appointment | all → authenticated |
+| billing | invoice/payment writes → ADMIN, BILLING_STAFF; reads → authenticated (PATIENT scoped to own invoices) |
+| appointment | all → authenticated (PATIENT/DOCTOR scoped to own identity; staff broad) |
 | notification | all → authenticated; reads scoped to `recipient_id == uid`, mark-read owner-only (ADMIN bypass) |
 | analytics | all `/api/v1/analytics/**` → ADMIN, DOCTOR (PATIENT → 403) |
+
+> **Note on the `STAFF` role:** several `SecurityConfig` rules above (patient POST/PUT, doctor POST/PUT/schedule) reference `STAFF`, but `STAFF` is **not** part of the `UserRole` enum and no `STAFF` role row is seeded. Since registration only ever assigns `PATIENT`, a `ROLE_STAFF` principal can never exist at runtime — the `STAFF` entries are effectively dead grants. The real "staff-like" roles (`NURSE`, `BILLING_STAFF`, `SUPPORT`) are handled per-service (e.g. appointment's `AccessControlService` `STAFF_ROLES` set). If `STAFF`-granted operations are intended for those roles, replace the literal `"STAFF"` with `"NURSE"`, `"BILLING_STAFF"`, `"SUPPORT"` (or add `STAFF` to the enum + seed a role row).
 
 ## 5. Resource Ownership Enforcement
 
@@ -39,7 +41,9 @@ The JWT `uid` (Auth `User.id`) is compared to stored business ids.
 - **Patients:** `Patient.patientId == uid`. A PATIENT can only access their own profile; admin/staff/doctor bypass. Patient creation by a PATIENT is forced to their own uid.
 - **Doctors:** `Doctor.doctorId == uid`. A DOCTOR can only access their own profile; discovery/search is unaffected. Creation by a DOCTOR is forced to their own uid.
 - **Medical records:** `MedicalRecord.doctorId == uid` for doctors; PATIENT read access requires `MedicalRecord.patientId == uid`; admin bypass. Search is scoped (`scopedPatientId`/`scopedDoctorId`) so a doctor only sees their own records and a patient only their own.
-- **Appointments / invoices:** no ownership checks at the service layer beyond authentication.
+- **Appointments:** enforced at the service layer by `AccessControlService`. A PATIENT is scoped to their own `patientId` and a DOCTOR to their own `doctorId` on create, list, get, reschedule, and cancel (a forced foreign identity returns 403); staff (ADMIN/NURSE/BILLING_STAFF/SUPPORT) have broad access.
+- **Invoices:** read access enforced at the service layer by `AccessControlService`. A PATIENT can only list/view/pay-inspect their own invoices (a forced foreign `patientId` on the list returns 403); staff (ADMIN/BILLING_STAFF) and other roles read through. Invoice/payment writes remain ADMIN/BILLING_STAFF only.
+- **Patients:** a PATIENT's list/search is forced to their own profile (returns only `patientId == uid`), in addition to the single-record GET ownership check.
 
 ## 6. Known Limitation: Admin-Created Profiles
 
@@ -49,7 +53,7 @@ Admin/staff creation of Patient and Doctor profiles accepts an explicit `userId`
 
 ## 7. Other Controls
 
-- **CORS:** configured per service and globally on the gateway; default origin `http://localhost:5173` (env `CORS_ALLOWED_ORIGINS`). CSRF disabled; stateless sessions.
+- **CORS:** configured per service and globally on the gateway; default origin `http://localhost:3000` (env `CORS_ALLOWED_ORIGINS`). CSRF disabled; stateless sessions.
 - **Input validation:** Bean Validation (`jakarta.validation`) on request DTOs; handled centrally (see `GlobalExceptionHandler`).
 - **SQL:** parameterized via Spring Data JPA; schema from Flyway migrations, `ddl-auto: validate`.
 - **Not implemented:** rate limiting, HTTPS enforcement in service configs, service-to-service mutual auth, audit logging tables, secret management integration.

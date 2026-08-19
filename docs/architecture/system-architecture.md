@@ -6,7 +6,7 @@
 MediFlow is a layered, event-driven architecture: a React + TypeScript frontend, a Spring Cloud Gateway edge, independently deployable Spring Boot microservices, PostgreSQL persistence (Flyway-managed, per-service schemas), and Apache Kafka for asynchronous domain events.
 
 ## Core Components (implemented)
-- Frontend: React 18 + TypeScript SPA (Vite, port 5173) — prototype shell, not yet API-connected
+- Frontend: React 18 + TypeScript SPA (Vite dev server, port 3000) — fully integrated: API client with JWT refresh, role-based routing, pages wired to `/api/v1/**`
 - Edge: Spring Cloud Gateway (port 8080) — path-based routing + global CORS
 - Services: auth (8081), patient (8083), appointment (8084), doctor (8085), billing (8087), analytics (8088), notification (8089), medical-record (8091)
 - Shared: `common-library` (BaseEntity, ApiResponse, GlobalExceptionHandler, enums, constants)

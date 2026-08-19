@@ -6,6 +6,7 @@ import com.mediflow.appointment.entity.Appointment;
 import com.mediflow.appointment.entity.AppointmentStatus;
 import com.mediflow.appointment.event.AppointmentEventPublisher;
 import com.mediflow.appointment.repository.AppointmentRepository;
+import com.mediflow.appointment.security.AccessControlService;
 import com.mediflow.common.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -22,19 +23,23 @@ public class AppointmentService {
 
     private final AppointmentRepository appointmentRepository;
     private final AppointmentEventPublisher eventPublisher;
+    private final AccessControlService accessControl;
 
     @Transactional
     public Appointment createAppointment(CreateAppointmentRequest request) {
         validateTimeRange(request.getStartTime(), request.getEndTime());
+        UUID patientId = accessControl.scopedPatientId(request.getPatientId());
+        UUID doctorId = accessControl.scopedDoctorId(request.getDoctorId());
+
         if (appointmentRepository.hasOverlappingAppointment(
-                request.getPatientId(), request.getDoctorId(), request.getStartTime(), request.getEndTime())) {
+                patientId, doctorId, request.getStartTime(), request.getEndTime())) {
             throw new IllegalArgumentException(
                     "Appointment conflicts with an existing appointment for the patient or doctor");
         }
 
         Appointment appointment = new Appointment();
-        appointment.setPatientId(request.getPatientId());
-        appointment.setDoctorId(request.getDoctorId());
+        appointment.setPatientId(patientId);
+        appointment.setDoctorId(doctorId);
         appointment.setStartTime(request.getStartTime());
         appointment.setEndTime(request.getEndTime());
         appointment.setNotes(request.getNotes());
@@ -50,19 +55,24 @@ public class AppointmentService {
     @Transactional(readOnly = true)
     public Page<Appointment> searchAppointments(AppointmentStatus status, UUID patientId, UUID doctorId,
                                                 LocalDateTime fromTime, LocalDateTime toTime, Pageable pageable) {
-        return appointmentRepository.search(status, patientId, doctorId, fromTime, toTime, pageable);
+        UUID scopedPatientId = accessControl.scopedPatientId(patientId);
+        UUID scopedDoctorId = accessControl.scopedDoctorId(doctorId);
+        return appointmentRepository.search(status, scopedPatientId, scopedDoctorId, fromTime, toTime, pageable);
     }
 
     @Transactional(readOnly = true)
     public Appointment getAppointment(UUID appointmentId) {
-        return appointmentRepository.findByAppointmentId(appointmentId)
+        Appointment appointment = appointmentRepository.findByAppointmentId(appointmentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Appointment not found with id: " + appointmentId));
+        accessControl.assertCanAccess(appointment);
+        return appointment;
     }
 
     @Transactional
     public Appointment updateAppointment(UUID appointmentId, UpdateAppointmentRequest request) {
         Appointment appointment = appointmentRepository.findByAppointmentIdForUpdate(appointmentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Appointment not found with id: " + appointmentId));
+        accessControl.assertCanAccess(appointment);
 
         if (!isMutable(appointment.getStatus())) {
             throw new IllegalArgumentException(
@@ -98,6 +108,7 @@ public class AppointmentService {
     public Appointment cancelAppointment(UUID appointmentId) {
         Appointment appointment = appointmentRepository.findByAppointmentIdForUpdate(appointmentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Appointment not found with id: " + appointmentId));
+        accessControl.assertCanAccess(appointment);
 
         if (!isMutable(appointment.getStatus())) {
             throw new IllegalArgumentException(

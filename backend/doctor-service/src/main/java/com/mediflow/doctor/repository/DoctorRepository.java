@@ -23,6 +23,6 @@ public interface DoctorRepository extends JpaRepository<Doctor, UUID> {
             + "lower(d.lastName) like lower(concat('%', :search, '%')) or "
             + "lower(d.email) like lower(concat('%', :search, '%')) or "
             + "lower(d.specialty) like lower(concat('%', :search, '%'))) "
-            + "and (:department is null or lower(d.department) = lower(:department))")
+            + "and (:department is null or lower(d.department) = lower(cast(:department as string)))")
     Page<Doctor> search(@Param("search") String search, @Param("department") String department, Pageable pageable);
 }

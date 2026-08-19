@@ -110,10 +110,91 @@ class InvoiceControllerIntegrationTest {
     }
 
     @Test
+    void listInvoicesScopedToPatient() throws Exception {
+        UUID patientA = UUID.randomUUID();
+        UUID patientB = UUID.randomUUID();
+        createInvoice(patientA, billingToken());
+        createInvoice(patientB, billingToken());
+
+        String patientAToken = token("patient1", patientA, List.of("PATIENT"));
+        mockMvc.perform(get("/api/v1/invoices")
+                        .header("Authorization", "Bearer " + patientAToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].patientId").value(patientA.toString()));
+
+        String patientBToken = token("patient2", patientB, List.of("PATIENT"));
+        mockMvc.perform(get("/api/v1/invoices")
+                        .header("Authorization", "Bearer " + patientBToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements").value(1))
+                .andExpect(jsonPath("$.data.content[0].patientId").value(patientB.toString()));
+    }
+
+    @Test
+    void patientListForcesOwnScopeWhenOtherPatientRequested() throws Exception {
+        UUID patientA = UUID.randomUUID();
+        UUID patientB = UUID.randomUUID();
+        createInvoice(patientA, billingToken());
+
+        String patientAToken = token("patient1", patientA, List.of("PATIENT"));
+        mockMvc.perform(get("/api/v1/invoices")
+                        .header("Authorization", "Bearer " + patientAToken)
+                        .param("patientId", patientB.toString()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getInvoiceByOwnerPatient() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String invoiceId = createInvoice(patientId, billingToken());
+
+        String patientToken = token("patient1", patientId, List.of("PATIENT"));
+        mockMvc.perform(get("/api/v1/invoices/" + invoiceId)
+                        .header("Authorization", "Bearer " + patientToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.invoiceId").value(invoiceId));
+    }
+
+    @Test
+    void getInvoiceDeniedForOtherPatient() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String invoiceId = createInvoice(patientId, billingToken());
+
+        String otherPatientToken = token("patient2", UUID.randomUUID(), List.of("PATIENT"));
+        mockMvc.perform(get("/api/v1/invoices/" + invoiceId)
+                        .header("Authorization", "Bearer " + otherPatientToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getPaymentsDeniedForOtherPatient() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String invoiceId = createInvoice(patientId, billingToken());
+
+        String otherPatientToken = token("patient2", UUID.randomUUID(), List.of("PATIENT"));
+        mockMvc.perform(get("/api/v1/invoices/" + invoiceId + "/payments")
+                        .header("Authorization", "Bearer " + otherPatientToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getInvoiceByAdmin() throws Exception {
+        String invoiceId = createInvoice();
+
+        mockMvc.perform(get("/api/v1/invoices/" + invoiceId)
+                        .header("Authorization", "Bearer " + adminToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.invoiceId").value(invoiceId));
+    }
+
+    @Test
     void listInvoicesReturnsPage() throws Exception {
-        createInvoice();
+        UUID patientId = UUID.randomUUID();
+        createInvoice(patientId, billingToken());
 
         mockMvc.perform(get("/api/v1/invoices")
+                        .param("patientId", patientId.toString())
                         .header("Authorization", "Bearer " + billingToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.totalElements").value(1));
@@ -213,10 +294,14 @@ class InvoiceControllerIntegrationTest {
     }
 
     private String createInvoice() throws Exception {
+        return createInvoice(UUID.randomUUID(), billingToken());
+    }
+
+    private String createInvoice(UUID patientId, String token) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/v1/invoices")
-                        .header("Authorization", "Bearer " + billingToken())
+                        .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(invoicePayload()))
+                        .content(invoicePayload(patientId)))
                 .andExpect(status().isCreated())
                 .andReturn();
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
@@ -224,19 +309,34 @@ class InvoiceControllerIntegrationTest {
     }
 
     private String invoicePayload() {
-        return "{\"patientId\":\"" + UUID.randomUUID() + "\",\"currency\":\"USD\","
+        return invoicePayload(UUID.randomUUID());
+    }
+
+    private String invoicePayload(UUID patientId) {
+        return "{\"patientId\":\"" + patientId + "\",\"currency\":\"USD\","
                 + "\"taxRate\":10,\"discount\":25,\"items\":["
                 + "{\"itemType\":\"CONSULTATION\",\"description\":\"Consultation\",\"quantity\":2,\"unitPrice\":100},"
                 + "{\"itemType\":\"LAB_TEST\",\"description\":\"Blood test\",\"quantity\":1,\"unitPrice\":50}]}";
     }
 
     private String token(List<String> roles) {
-        return Jwts.builder()
-                .subject("billing-user")
+        return token("billing-user", null, roles);
+    }
+
+    private String adminToken() {
+        return token("admin", null, List.of("ADMIN"));
+    }
+
+    private String token(String subject, UUID uid, List<String> roles) {
+        io.jsonwebtoken.JwtBuilder builder = Jwts.builder()
+                .subject(subject)
                 .claim("roles", roles)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + 600_000))
-                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256)
-                .compact();
+                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256);
+        if (uid != null) {
+            builder = builder.claim("uid", uid.toString());
+        }
+        return builder.compact();
     }
 }

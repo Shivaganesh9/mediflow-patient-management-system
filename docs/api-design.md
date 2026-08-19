@@ -47,11 +47,11 @@
 
 | Method & Path | Auth | Description |
 |---|---|---|
-| POST `` | authenticated | Create (status SCHEDULED); 400 if `endTime <= startTime` or time overlaps patient/doctor |
-| GET `` | authenticated | Filter `status`, `patientId`, `doctorId`, `fromTime`, `toTime`, pageable |
-| GET `/{appointmentId}` | authenticated | Get by business id; 404 if missing |
-| PUT `/{appointmentId}` | authenticated | Reschedule; only when status SCHEDULED/CONFIRMED; overlap-checked excluding self |
-| PATCH `/{appointmentId}/cancel` | authenticated | Cancel; only when status SCHEDULED/CONFIRMED |
+| POST `` | authenticated (scoped) | Create (status SCHEDULED); PATIENT forced to own patientId, DOCTOR to own doctorId, staff any. 400 if `endTime <= startTime` or time overlaps patient/doctor |
+| GET `` | authenticated (scoped) | Filter `status`, `patientId`, `doctorId`, `fromTime`, `toTime`, pageable; PATIENT/DOCTOR forced to own identity |
+| GET `/{appointmentId}` | authenticated (ownership) | Get by business id; PATIENT/DOCTOR only own (403 otherwise), staff any; 404 if missing |
+| PUT `/{appointmentId}` | authenticated (ownership) | Reschedule; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED; overlap-checked excluding self |
+| PATCH `/{appointmentId}/cancel` | authenticated (ownership) | Cancel; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED |
 
 ## 6. Medical Record Service (8091) — `/api/v1/medical-records`
 
@@ -67,8 +67,8 @@
 | Method & Path | Auth (role) | Description |
 |---|---|---|
 | POST `/api/v1/invoices` | ADMIN/BILLING_STAFF | Generate invoice (PENDING, computed amounts, `INV-...` number); 400 if total <= 0 |
-| GET `/api/v1/invoices` | authenticated | Filter `status`, `patientId`, `appointmentId`, pageable |
-| GET `/api/v1/invoices/{invoiceId}` | authenticated | Invoice with items + payments |
+| GET `/api/v1/invoices` | authenticated (scoped) | Filter `status`, `patientId`, `appointmentId`, pageable; PATIENT forced to own patientId (403 if foreign filter) |
+| GET `/api/v1/invoices/{invoiceId}` | authenticated (ownership) | Invoice with items + payments; PATIENT only own invoice (403 otherwise), staff any |
 | PUT `/api/v1/invoices/{invoiceId}` | ADMIN/BILLING_STAFF | Edit items/tax/discount/dueDate/notes; only when PENDING |
 | POST `/api/v1/invoices/{invoiceId}/cancel` | ADMIN/BILLING_STAFF | Cancel; only PENDING with no payments |
 | POST `/api/v1/invoices/{invoiceId}/payments` | ADMIN/BILLING_STAFF | Record payment (≤ remaining balance); recomputes status PAID/PARTIALLY_PAID |
@@ -101,6 +101,8 @@ Revenue rules: `invoiced` excludes CANCELLED invoices (`sum_invoiced`); `collect
 
 ## 10. API Gateway (8080)
 
-Routes (Path predicate → service): `/api/v1/auth/**` → auth (8081), `/api/v1/patients/**` → patient (8083), `/api/v1/appointments/**` → appointment (8084), `/api/v1/medical-records/**` → medical-record (8091), `/api/v1/doctors/**` → doctor (8085), `/api/v1/invoices/**` → billing (8087), `/api/v1/notifications/**` → notification (8089), `/api/v1/analytics/**` → analytics (8088). Global CORS for `http://localhost:5173`.
+Routes (Path predicate → service): `/api/v1/auth/**` → auth (8081), `/api/v1/patients/**` → patient (8083), `/api/v1/appointments/**` → appointment (8084), `/api/v1/medical-records/**` → medical-record (8091), `/api/v1/doctors/**` → doctor (8085), `/api/v1/invoices/**` → billing (8087), `/api/v1/notifications/**` → notification (8089), `/api/v1/analytics/**` → analytics (8088). Global CORS allow-list: `http://localhost:3000` (Vite dev) — set `CORS_ALLOWED_ORIGINS` to add origins.
 
-> Note: the gateway has two route sources — `application.yml` routes use direct service URLs (working in local dev), while the `RouteConfig` bean declares `lb://` URIs that require a discovery/load balancer (not present in this repo, so those routes are not functional).
+> Note: the gateway routes come from `application.yml` using direct service URLs (working in local dev). No `lb://` discovery routes exist in this repo (a Eureka registry is not provided).
+
+> Note on the `STAFF` role in the auth column: `STAFF` is referenced by patient/doctor `SecurityConfig` rules (POST/PUT) but is **not** in the `UserRole` enum and no `STAFF` role row is seeded — registration always assigns `PATIENT`, so a `ROLE_STAFF` principal can never exist. These are effectively dead grants; the real staff-like roles are `NURSE`/`BILLING_STAFF`/`SUPPORT` (see `docs/security.md` §4).

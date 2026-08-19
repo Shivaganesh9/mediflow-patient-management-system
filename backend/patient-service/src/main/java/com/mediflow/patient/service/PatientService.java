@@ -11,11 +11,13 @@ import com.mediflow.patient.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -51,6 +53,14 @@ public class PatientService {
 
     @Transactional(readOnly = true)
     public Page<PatientResponse> searchPatients(String search, Pageable pageable) {
+        if (currentUser.hasRole("PATIENT")) {
+            UUID selfId = currentUser.requireCurrentUserId();
+            List<PatientResponse> content = patientRepository.findByPatientIdAndDeletedAtIsNull(selfId)
+                    .stream()
+                    .map(patientMapper::toResponse)
+                    .toList();
+            return new PageImpl<>(content, pageable, content.size());
+        }
         return patientRepository.searchActivePatients(search, pageable).map(patientMapper::toResponse);
     }
 

@@ -158,7 +158,7 @@ The existing Java 21 build was checked during the audit workflow and failed befo
 
 ### Security risks
 
-- **Committed credential defaults:** [docker-compose.yml](../docker-compose.yml#L3-L9) contains `mediflow123`; service YAML files commonly fall back to `root` or other local passwords. Remove defaults from production paths and rotate any credentials that may have escaped the development environment.
+- **Committed credential defaults:** [docker-compose.yml](../docker-compose.yml#L3-L9) previously contained a plaintext local dev DB password; service YAML files commonly fall back to `root` or other local passwords. Remove defaults from production paths and rotate any credentials that may have escaped the development environment.
 - **Weak JWT fallback:** [auth application.yml](../backend/auth-service/src/main/resources/application.yml#L24-L27) uses `change-me-in-production`. Require a sufficiently long secret and fail startup if `JWT_SECRET` is absent in non-development profiles.
 - **Wildcard CORS:** [gateway application.yml](../backend/api-gateway/src/main/resources/application.yml#L13-L19) allows every origin, method, and header. Restrict origins per environment and avoid credentials with wildcard origins.
 - **Potentially broad authorization:** Auth has an explicit security filter chain, but domain controllers need explicit role and ownership checks. Do not assume authentication equals authorization for patient or billing data.
@@ -330,11 +330,11 @@ MediFlow has a sensible domain direction and a useful initial service decomposit
 - **Doctor, billing, notification, analytics:** now implemented domains (not scaffolds); appointment service has conflict detection and event publishing; notification-service consumes appointment/billing events and analytics-service consumes appointment/billing/medical-record events (both idempotent, retry/DLQ).
 
 ### Still outstanding (unchanged)
-- Frontend not API-connected (prototype shell; no auth, routing, or API client).
 - No outbox pattern or retry policy for producers; analytics does not consume `medical-record.updated.v1`.
 - No service registry/config server; Eureka configured but no server in repo.
 - No production deployment (Kubernetes/registry/CD), monitoring stack, or rate limiting. Container images and CI verification were added 2026-08-15 (see below).
 - Admin/staff-created patient/doctor profiles do not synchronously validate the referenced Auth user.
+- Frontend integration was completed 2026-08-16 (API client with JWT refresh, role-based routing, pages wired to `/api/v1/**`) — the frontend-not-connected item below is resolved.
 
 ---
 

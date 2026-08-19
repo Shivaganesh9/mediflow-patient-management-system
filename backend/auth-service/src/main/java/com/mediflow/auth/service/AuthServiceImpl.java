@@ -48,7 +48,7 @@ public class AuthServiceImpl implements AuthService {
             throw new IllegalArgumentException("Email already exists");
         }
 
-        Role role = roleRepository.findByName(request.getRole() == null ? "PATIENT" : request.getRole().toUpperCase())
+        Role role = roleRepository.findByName("PATIENT")
                 .orElseGet(() -> roleRepository.save(Role.builder().name("PATIENT").description("Default patient role").build()));
 
         User user = User.builder()

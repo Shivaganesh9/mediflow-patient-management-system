@@ -1,27 +1,31 @@
-import React, { useMemo, useState } from 'react';
-import { DashboardPage } from '../pages/DashboardPage';
-import { PatientsPage } from '../pages/PatientsPage';
-import { AppointmentsPage } from '../pages/AppointmentsPage';
-import { DoctorsPage } from '../pages/DoctorsPage';
-import { BillingPage } from '../pages/BillingPage';
-import { NotificationsPage } from '../pages/NotificationsPage';
-import { AnalyticsPage } from '../pages/AnalyticsPage';
-import '../styles.css';
+import { NavLink, Outlet, Link, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { useAsync } from '../hooks/useAsync';
+import { notificationsApi } from '../api/notifications';
 
-const navigation = [
-  { id: 'dashboard', label: 'Dashboard', page: <DashboardPage /> },
-  { id: 'patients', label: 'Patients', page: <PatientsPage /> },
-  { id: 'appointments', label: 'Appointments', page: <AppointmentsPage /> },
-  { id: 'doctors', label: 'Doctors', page: <DoctorsPage /> },
-  { id: 'billing', label: 'Billing', page: <BillingPage /> },
-  { id: 'notifications', label: 'Notifications', page: <NotificationsPage /> },
-  { id: 'analytics', label: 'Analytics', page: <AnalyticsPage /> }
+interface NavItem {
+  to: string;
+  label: string;
+  roles?: string[];
+}
+
+const navigation: NavItem[] = [
+  { to: '/', label: 'Dashboard' },
+  { to: '/appointments', label: 'Appointments' },
+  { to: '/doctors', label: 'Doctors' },
+  { to: '/patients', label: 'Patients', roles: ['ADMIN', 'DOCTOR', 'NURSE', 'BILLING_STAFF', 'SUPPORT'] },
+  { to: '/medical-records', label: 'Medical Records', roles: ['ADMIN', 'DOCTOR', 'NURSE', 'PATIENT'] },
+  { to: '/billing', label: 'Billing', roles: ['ADMIN', 'DOCTOR', 'NURSE', 'BILLING_STAFF', 'SUPPORT', 'PATIENT'] },
+  { to: '/notifications', label: 'Notifications' },
+  { to: '/analytics', label: 'Analytics', roles: ['ADMIN', 'DOCTOR'] },
 ];
 
 export function AppShell() {
-  const [activeView, setActiveView] = useState('dashboard');
+  const { user, hasRole, logout } = useAuth();
+  const location = useLocation();
 
-  const activePage = useMemo(() => navigation.find((item) => item.id === activeView)?.page ?? <DashboardPage />, [activeView]);
+  const visible = navigation.filter((item) => !item.roles || hasRole(...item.roles));
+  const unread = useAsync(() => notificationsApi.unreadCount(), [location.pathname]);
 
   return (
     <div className="app-shell">
@@ -31,15 +35,15 @@ export function AppShell() {
           <p>Patient management platform</p>
         </div>
         <nav className="nav-list" aria-label="Primary">
-          {navigation.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-link ${activeView === item.id ? 'active' : ''}`}
-              onClick={() => setActiveView(item.id)}
-              type="button"
+          {visible.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/'}
+              className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
             >
               {item.label}
-            </button>
+            </NavLink>
           ))}
         </nav>
       </aside>
@@ -50,10 +54,38 @@ export function AppShell() {
             <h2>Care operations hub</h2>
             <p>Track patients, appointments, billing, and clinician activity.</p>
           </div>
-          <button className="primary-btn" type="button">New case</button>
+          <div className="topbar-actions">
+            <Link to="/notifications" className="bell-link" title="Notifications">
+              <svg
+                className="bell-icon"
+                viewBox="0 0 24 24"
+                width="20"
+                height="20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                aria-hidden="true"
+              >
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+              {typeof unread.data === 'number' && unread.data > 0 ? (
+                <span className="bell-badge">{unread.data}</span>
+              ) : null}
+            </Link>
+            <div className="user-chip">
+              <strong>{user?.fullName ?? user?.username}</strong>
+              <span>{user?.roles.join(', ')}</span>
+            </div>
+            <button className="btn secondary-btn" type="button" onClick={() => void logout()}>
+              Sign out
+            </button>
+          </div>
         </header>
 
-        <main className="content">{activePage}</main>
+        <main className="content">
+          <Outlet />
+        </main>
       </div>
     </div>
   );

@@ -1,43 +1,482 @@
-import React from 'react';
-
-const appointments = [
-  { title: 'Cardiology consult', patient: 'Ava Patel', time: '09:30', doctor: 'Dr. Morgan' },
-  { title: 'Lab review', patient: 'Noah Kim', time: '11:00', doctor: 'Dr. Chen' },
-  { title: 'Follow-up', patient: 'Mina Alvarez', time: '14:15', doctor: 'Dr. Rivera' }
-];
+import { FormEvent, useMemo, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useAsync } from '../hooks/useAsync';
+import { appointmentsApi } from '../api/appointments';
+import { patientsApi } from '../api/patients';
+import { doctorsApi } from '../api/doctors';
+import {
+  APPOINTMENT_STATUSES,
+  Appointment,
+  AppointmentStatus,
+  CreateAppointmentRequest,
+  UpdateAppointmentRequest,
+} from '../types/appointment';
+import { ApiError } from '../types/common';
+import { LoadingState, ErrorState, EmptyState } from '../components/PageState';
+import { Pagination } from '../components/Pagination';
+import { Modal } from '../components/Modal';
+import { StatusPill } from '../components/StatusPill';
+import { displayName, formatDateTime, fromLocalDateTimeInput, shortId, toLocalDateTimeInput } from '../utils/format';
 
 export function AppointmentsPage() {
+  const { user, roles, hasRole } = useAuth();
+  const [status, setStatus] = useState('');
+  const [fromTime, setFromTime] = useState('');
+  const [toTime, setToTime] = useState('');
+  const [page, setPage] = useState(0);
+  const [showCreate, setShowCreate] = useState(false);
+
+  const isPatient = roles.includes('PATIENT');
+  const isDoctor = roles.includes('DOCTOR');
+  const isStaff = hasRole('ADMIN', 'NURSE', 'BILLING_STAFF', 'SUPPORT');
+
+  const scope = useMemo(
+    () => ({
+      patientId: isPatient ? user?.id : undefined,
+      doctorId: isDoctor ? user?.id : undefined,
+    }),
+    [isPatient, isDoctor, user?.id],
+  );
+
+  const list = useAsync(
+    () =>
+      appointmentsApi.list({
+        ...scope,
+        status: (status as AppointmentStatus) || undefined,
+        fromTime: fromTime ? fromLocalDateTimeInput(fromTime) : undefined,
+        toTime: toTime ? fromLocalDateTimeInput(toTime) : undefined,
+        page,
+        size: 20,
+      }),
+    [scope.patientId, scope.doctorId, status, fromTime, toTime, page],
+  );
+
+  const doctorNames = useAsync(
+    () =>
+      isDoctor
+        ? Promise.resolve([{ doctorId: user?.id ?? '', name: user?.fullName ?? shortId(user?.id) }])
+        : doctorsApi.list({ page: 0, size: 1000 }).then((p) => p.content.map((d) => ({ doctorId: d.doctorId, name: `Dr. ${displayName(d.firstName, d.lastName)}` }))),
+    [isDoctor, user?.id, user?.fullName],
+  );
+
+  const patientNames = useAsync(
+    () =>
+      isPatient
+        ? Promise.resolve([{ patientId: user?.id ?? '', name: user?.fullName ?? shortId(user?.id) }])
+        : patientsApi.list({ page: 0, size: 1000 }).then((p) => p.content.map((pt) => ({ patientId: pt.patientId, name: displayName(pt.firstName, pt.lastName) }))),
+    [isPatient, user?.id, user?.fullName],
+  );
+
+  const doctorName = (id: string) => doctorNames.data?.find((d) => d.doctorId === id)?.name ?? shortId(id);
+  const patientName = (id: string) => patientNames.data?.find((p) => p.patientId === id)?.name ?? shortId(id);
+
+  const canCreate = isPatient || isDoctor || isStaff;
+
   return (
     <div className="page-stack">
       <section className="hero-card">
         <div>
           <p className="eyebrow">Appointments</p>
           <h2>Coordinate every visit with confidence.</h2>
-          <p>Track upcoming consultations, room readiness, and follow-up care in one timeline.</p>
+          <p>Track upcoming consultations, follow-ups, and cancellations in one view.</p>
         </div>
-        <button className="primary-btn">Schedule visit</button>
+        {canCreate ? (
+          <button className="primary-btn" type="button" onClick={() => setShowCreate(true)}>
+            Schedule visit
+          </button>
+        ) : null}
       </section>
 
       <section className="card">
         <div className="section-header">
-          <h3>Today’s schedule</h3>
-          <a href="#/doctors">View doctors</a>
+          <h3>Appointments</h3>
+          <div className="toolbar">
+            <select
+              className="search-input"
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                setPage(0);
+              }}
+            >
+              <option value="">All statuses</option>
+              {APPOINTMENT_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s.replace(/_/g, ' ')}
+                </option>
+              ))}
+            </select>
+            <input
+              className="search-input"
+              type="datetime-local"
+              aria-label="From"
+              value={fromTime}
+              onChange={(e) => {
+                setFromTime(e.target.value);
+                setPage(0);
+              }}
+            />
+            <input
+              className="search-input"
+              type="datetime-local"
+              aria-label="To"
+              value={toTime}
+              onChange={(e) => {
+                setToTime(e.target.value);
+                setPage(0);
+              }}
+            />
+          </div>
         </div>
-        <div className="stack-list">
-          {appointments.map((appointment) => (
-            <div key={appointment.time} className="list-item">
-              <div>
-                <strong>{appointment.title}</strong>
-                <p>{appointment.patient}</p>
-              </div>
-              <div className="muted">
-                <span>{appointment.time}</span>
-                <span>{appointment.doctor}</span>
-              </div>
-            </div>
-          ))}
-        </div>
+
+        {list.loading ? (
+          <LoadingState />
+        ) : list.error ? (
+          <ErrorState message={list.error} />
+        ) : list.data && list.data.content.length > 0 ? (
+          <>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Reason</th>
+                  <th>Patient</th>
+                  <th>Doctor</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.data.content.map((appointment) => (
+                  <AppointmentRow
+                    key={appointment.appointmentId}
+                    appointment={appointment}
+                    patientName={patientName(appointment.patientId)}
+                    doctorName={doctorName(appointment.doctorId)}
+                    onRescheduled={() => list.reload()}
+                    onCancelled={() => list.reload()}
+                  />
+                ))}
+              </tbody>
+            </table>
+            <Pagination
+              page={list.data.number}
+              totalPages={list.data.totalPages}
+              totalElements={list.data.totalElements}
+              pageSize={list.data.size}
+              onPageChange={setPage}
+            />
+          </>
+        ) : (
+          <EmptyState message="No appointments match the current filters." />
+        )}
       </section>
+
+      {showCreate && canCreate ? (
+        <CreateAppointmentModal
+          isPatient={isPatient}
+          isDoctor={isDoctor}
+          currentUserId={user?.id ?? ''}
+          currentUserName={user?.fullName}
+          onClose={() => setShowCreate(false)}
+          onCreated={() => {
+            setShowCreate(false);
+            list.reload();
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function AppointmentRow({
+  appointment,
+  patientName,
+  doctorName,
+  onRescheduled,
+  onCancelled,
+}: {
+  appointment: Appointment;
+  patientName: string;
+  doctorName: string;
+  onRescheduled: () => void;
+  onCancelled: () => void;
+}) {
+  const [rescheduling, setRescheduling] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const canReschedule = appointment.status === 'SCHEDULED' || appointment.status === 'CONFIRMED';
+
+  const handleCancel = async () => {
+    if (!window.confirm(`Cancel this appointment (${appointment.reason})?`)) return;
+    setCancelling(true);
+    try {
+      await appointmentsApi.cancel(appointment.appointmentId);
+      onCancelled();
+    } catch (err) {
+      if (err instanceof ApiError) window.alert(err.message);
+      else window.alert('Unable to cancel appointment.');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  return (
+    <>
+      <tr>
+        <td>{appointment.reason}</td>
+        <td>{patientName}</td>
+        <td>{doctorName}</td>
+        <td>{formatDateTime(appointment.startTime)}</td>
+        <td>{formatDateTime(appointment.endTime)}</td>
+        <td>
+          <StatusPill status={appointment.status} />
+        </td>
+        <td className="row-actions">
+          {canReschedule ? (
+            <button className="btn small-btn" type="button" onClick={() => setRescheduling(true)}>
+              Reschedule
+            </button>
+          ) : null}
+          {appointment.status !== 'CANCELLED' ? (
+            <button className="btn small-btn" type="button" disabled={cancelling} onClick={() => void handleCancel()}>
+              {cancelling ? '…' : 'Cancel'}
+            </button>
+          ) : null}
+        </td>
+      </tr>
+      {rescheduling ? (
+        <RescheduleModal
+          appointment={appointment}
+          onClose={() => setRescheduling(false)}
+          onSaved={() => {
+            setRescheduling(false);
+            onRescheduled();
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function CreateAppointmentModal({
+  isPatient,
+  isDoctor,
+  currentUserId,
+  currentUserName,
+  onClose,
+  onCreated,
+}: {
+  isPatient: boolean;
+  isDoctor: boolean;
+  currentUserId: string;
+  currentUserName?: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [form, setForm] = useState<CreateAppointmentRequest>({
+    patientId: isPatient ? currentUserId : '',
+    doctorId: isDoctor ? currentUserId : '',
+    startTime: '',
+    endTime: '',
+    reason: '',
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const patients = useAsync(
+    () => patientsApi.list({ page: 0, size: 1000 }),
+    [isPatient],
+  );
+  const doctors = useAsync(() => doctorsApi.list({ page: 0, size: 1000 }), [isDoctor]);
+
+  const set = (key: keyof CreateAppointmentRequest, value: string) => setForm((f) => ({ ...f, [key]: value }));
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await appointmentsApi.create({
+        ...form,
+        startTime: fromLocalDateTimeInput(form.startTime),
+        endTime: fromLocalDateTimeInput(form.endTime),
+      });
+      onCreated();
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.message);
+      else setError('Unable to schedule appointment.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal title="Schedule visit" onClose={onClose}>
+      <form className="form" onSubmit={handleSubmit}>
+        {isPatient ? (
+          <p className="muted">Booking as: {currentUserName ?? currentUserId}</p>
+        ) : null}
+        {isDoctor ? (
+          <p className="muted">Booking as: {currentUserName ?? currentUserId}</p>
+        ) : null}
+        {!isPatient ? (
+          <label className="field">
+            <span>Patient *</span>
+            <select required value={form.patientId} onChange={(e) => set('patientId', e.target.value)}>
+              <option value="">Select patient…</option>
+              {patients.data?.content.map((p) => (
+                <option key={p.patientId} value={p.patientId}>
+                  {displayName(p.firstName, p.lastName)} ({shortId(p.patientId)})
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {!isDoctor ? (
+          <label className="field">
+            <span>Doctor *</span>
+            <select required value={form.doctorId} onChange={(e) => set('doctorId', e.target.value)}>
+              <option value="">Select doctor…</option>
+              {doctors.data?.content.map((d) => (
+                <option key={d.doctorId} value={d.doctorId}>
+                  Dr. {displayName(d.firstName, d.lastName)} — {d.specialty}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <div className="form-grid">
+          <label className="field">
+            <span>Start *</span>
+            <input
+              type="datetime-local"
+              required
+              value={toLocalDateTimeInput(form.startTime)}
+              onChange={(e) => set('startTime', fromLocalDateTimeInput(e.target.value))}
+            />
+          </label>
+          <label className="field">
+            <span>End *</span>
+            <input
+              type="datetime-local"
+              required
+              value={toLocalDateTimeInput(form.endTime)}
+              onChange={(e) => set('endTime', fromLocalDateTimeInput(e.target.value))}
+            />
+          </label>
+        </div>
+        <label className="field">
+          <span>Reason *</span>
+          <input required value={form.reason} onChange={(e) => set('reason', e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Appointment type</span>
+          <input value={form.appointmentType ?? ''} onChange={(e) => set('appointmentType', e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Notes</span>
+          <textarea rows={2} value={form.notes ?? ''} onChange={(e) => set('notes', e.target.value)} />
+        </label>
+        {error ? <p className="form-error">{error}</p> : null}
+        <div className="form-actions">
+          <button type="button" className="btn secondary-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary-btn" type="submit" disabled={submitting}>
+            {submitting ? 'Scheduling…' : 'Schedule'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function RescheduleModal({
+  appointment,
+  onClose,
+  onSaved,
+}: {
+  appointment: Appointment;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<UpdateAppointmentRequest>({
+    startTime: appointment.startTime,
+    endTime: appointment.endTime,
+    notes: appointment.notes,
+    reason: appointment.reason,
+    appointmentType: appointment.appointmentType,
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const set = (key: keyof UpdateAppointmentRequest, value: string) => setForm((f) => ({ ...f, [key]: value }));
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await appointmentsApi.update(appointment.appointmentId, {
+        ...form,
+        startTime: fromLocalDateTimeInput(form.startTime),
+        endTime: fromLocalDateTimeInput(form.endTime),
+      });
+      onSaved();
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.message);
+      else setError('Unable to reschedule appointment.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal title="Reschedule appointment" onClose={onClose}>
+      <form className="form" onSubmit={handleSubmit}>
+        <div className="form-grid">
+          <label className="field">
+            <span>Start *</span>
+            <input
+              type="datetime-local"
+              required
+              value={toLocalDateTimeInput(form.startTime)}
+              onChange={(e) => set('startTime', fromLocalDateTimeInput(e.target.value))}
+            />
+          </label>
+          <label className="field">
+            <span>End *</span>
+            <input
+              type="datetime-local"
+              required
+              value={toLocalDateTimeInput(form.endTime)}
+              onChange={(e) => set('endTime', fromLocalDateTimeInput(e.target.value))}
+            />
+          </label>
+        </div>
+        <label className="field">
+          <span>Reason</span>
+          <input value={form.reason ?? ''} onChange={(e) => set('reason', e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Appointment type</span>
+          <input value={form.appointmentType ?? ''} onChange={(e) => set('appointmentType', e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Notes</span>
+          <textarea rows={2} value={form.notes ?? ''} onChange={(e) => set('notes', e.target.value)} />
+        </label>
+        {error ? <p className="form-error">{error}</p> : null}
+        <div className="form-actions">
+          <button type="button" className="btn secondary-btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary-btn" type="submit" disabled={submitting}>
+            {submitting ? 'Saving…' : 'Reschedule'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }

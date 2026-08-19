@@ -8,9 +8,9 @@ MediFlow is a patient-management platform built as a set of independently deploy
 
 ## 2. System Composition
 
-- **React + TypeScript frontend** (`frontend/mediflow-ui`, Vite, port 5173). Presentation shell only: pages for dashboard, patients, doctors, appointments, billing, notifications, and analytics. No API client or auth wiring yet.
+- **React + TypeScript frontend** (`frontend/mediflow-ui`, Vite dev server, port 3000). Fully integrated SPA: API client with JWT refresh, `AuthContext`, role-based routing (`ProtectedRoute`/`RoleRoute`), and pages for login, dashboard, patients, doctors, appointments, medical records, billing, notifications, and analytics — all wired to `/api/v1/**` through the gateway.
 - **Spring Cloud Gateway** (`api-gateway`, port 8080) routes `/api/v1/**` paths to the backing services and applies global CORS.
-- **Backend microservices** under `backend/`, all depending on `common-library`.
+- **Backend microservices** under `backend/`, all depending on `common-library` (except `api-gateway`, which uses only Spring Cloud Gateway + springdoc).
 - **Apache Kafka** for asynchronous domain events published by appointment, medical-record, and billing services.
 - **PostgreSQL 16** via Flyway migrations (`ddl-auto: validate`).
 
@@ -51,7 +51,7 @@ Each service follows `controller → service → repository → entity`, plus `d
 ## 7. Runtime Configuration
 
 - Required env vars: `JWT_SECRET`, `DB_PASSWORD`. Optional: `DB_URL`, `KAFKA_BOOTSTRAP_SERVERS`, `EUREKA_URL`, `CORS_ALLOWED_ORIGINS`, JWT expirations, per-service URLs.
-- Default per-service DBs (`patient_db`, `auth_db`, ...) are overridden by `.env` `DB_URL` to a single shared `mediflow` database in local dev.
+- Default per-service DBs (`patient_db`, `auth_db`, ...) are overridden by `.env` `DB_URL`. The checked-in `.env` does **not** set `DB_URL`, so services run against per-service DBs by default; set `DB_URL` to point all services at a single shared `mediflow` database if desired.
 - Each of the 9 runnable services has a `Dockerfile` + `.dockerignore` (Temurin 21 JRE). Maven produces a plain jar (used by reactor consumers) plus an executable `<service>-1.0.0-exec.jar` via the Spring Boot `repackage` goal with an `exec` classifier; images copy the `-exec` jar. GitHub Actions (`.github/workflows/ci.yml`) verifies backend tests, frontend build, and all 9 images.
 
 ## 8. Known Limitations
@@ -59,3 +59,4 @@ Each service follows `controller → service → repository → entity`, plus `d
 - Analytics service's `medical-record.updated.v1` topic is not consumed (only the created topic); no outbox pattern on producers.
 - Admin/staff-created patient and doctor profiles accept an explicit Auth user UUID without a synchronous check that the user exists (see `docs/security.md`).
 - No service registry, config server, rate limiting, tracing, or observability stack implemented.
+- The frontend Dockerfile runs the Vite dev server, not a production static build.

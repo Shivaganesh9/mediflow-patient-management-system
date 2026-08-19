@@ -42,11 +42,11 @@ public interface AppointmentRepository extends JpaRepository<Appointment, UUID> 
                            @Param("startTime") java.time.LocalDateTime startTime,
                            @Param("endTime") java.time.LocalDateTime endTime);
 
-    @Query("select a from Appointment a where (:status is null or a.status = :status) "
-        + "and (:patientId is null or a.patientId = :patientId) "
-        + "and (:doctorId is null or a.doctorId = :doctorId) "
-        + "and (:fromTime is null or a.startTime >= :fromTime) "
-        + "and (:toTime is null or a.endTime <= :toTime)")
+    @Query("select a from Appointment a where (cast(:status as string) is null or a.status = :status) "
+        + "and (cast(:patientId as string) is null or a.patientId = :patientId) "
+        + "and (cast(:doctorId as string) is null or a.doctorId = :doctorId) "
+        + "and (cast(:fromTime as timestamp) is null or a.startTime >= :fromTime) "
+        + "and (cast(:toTime as timestamp) is null or a.endTime <= :toTime)")
     Page<Appointment> search(@Param("status") AppointmentStatus status, @Param("patientId") UUID patientId,
                  @Param("doctorId") UUID doctorId, @Param("fromTime") java.time.LocalDateTime fromTime,
                  @Param("toTime") java.time.LocalDateTime toTime, Pageable pageable);

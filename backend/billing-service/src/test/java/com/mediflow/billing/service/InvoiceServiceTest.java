@@ -13,6 +13,7 @@ import com.mediflow.billing.entity.PaymentStatus;
 import com.mediflow.billing.event.BillingEventPublisher;
 import com.mediflow.billing.repository.InvoiceRepository;
 import com.mediflow.billing.repository.PaymentRepository;
+import com.mediflow.billing.security.AccessControlService;
 import com.mediflow.common.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +22,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -33,6 +35,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,6 +52,9 @@ class InvoiceServiceTest {
 
     @Mock
     private BillingEventPublisher eventPublisher;
+
+    @Mock
+    private AccessControlService accessControl;
 
     @InjectMocks
     private InvoiceService invoiceService;
@@ -330,6 +337,39 @@ class InvoiceServiceTest {
         var result = invoiceService.searchInvoices(InvoiceStatus.PENDING, UUID.randomUUID(), null, Pageable.unpaged());
 
         assertEquals(1, result.getTotalElements());
+    }
+
+    @Test
+    void searchInvoicesScopesPatientIdThroughAccessControl() {
+        UUID scopedPatientId = UUID.randomUUID();
+        when(accessControl.scopedPatientId(any())).thenReturn(scopedPatientId);
+        when(invoiceRepository.search(any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(invoiceWithId(UUID.randomUUID()))));
+
+        invoiceService.searchInvoices(null, UUID.randomUUID(), null, Pageable.unpaged());
+
+        verify(accessControl).scopedPatientId(any());
+        verify(invoiceRepository).search(any(), eq(scopedPatientId), any(), any(Pageable.class));
+    }
+
+    @Test
+    void getInvoiceDeniedByAccessControl() {
+        UUID invoiceId = UUID.randomUUID();
+        Invoice invoice = invoiceWithId(invoiceId);
+        when(invoiceRepository.findByInvoiceId(invoiceId)).thenReturn(Optional.of(invoice));
+        doThrow(new AccessDeniedException("denied")).when(accessControl).assertCanRead(invoice);
+
+        assertThrows(AccessDeniedException.class, () -> invoiceService.getInvoice(invoiceId));
+    }
+
+    @Test
+    void getPaymentsDeniedByAccessControl() {
+        UUID invoiceId = UUID.randomUUID();
+        Invoice invoice = invoiceWithId(invoiceId);
+        when(invoiceRepository.findByInvoiceId(invoiceId)).thenReturn(Optional.of(invoice));
+        doThrow(new AccessDeniedException("denied")).when(accessControl).assertCanRead(invoice);
+
+        assertThrows(AccessDeniedException.class, () -> invoiceService.getPayments(invoiceId));
     }
 
     private CreateInvoiceRequest createInvoiceRequest(int qty1, String price1, Integer qty2, String price2,

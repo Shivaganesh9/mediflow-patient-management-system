@@ -18,8 +18,8 @@ Enterprise patient-management platform: Spring Boot 3 microservices + React/TS +
 - Build all backend modules (from repo root): `mvn -DskipTests package` — no Maven wrapper; system `mvn` required
 - Build/run one service with its reactor deps: `mvn -pl backend/patient-service -am spring-boot:run`
 - Test one service: `mvn -pl backend/patient-service test` — tests use H2 (PostgreSQL mode), no external infra needed
-- Frontend: `cd frontend/mediflow-ui && npm run dev` (Vite, port 5173); build: `npm run build`. No lint/test scripts exist.
-- Infra: `docker compose up -d` (Postgres 16 + Kafka 3.7). Requires `.env` copied from `.env.example`; compose aborts if `POSTGRES_*` vars are missing.
+- Frontend: `cd frontend/mediflow-ui && npm run dev` (Vite dev server, port 3000 — the CORS allow-list defaults to `http://localhost:3000`; override with `CORS_ALLOWED_ORIGINS` if you change the port); build: `npm run build` (`tsc -b && vite build`). No lint/test scripts exist.
+- Infra: `docker compose up -d` (Postgres 16 + Kafka 4.0, KRaft single node). Requires `.env` copied from `.env.example`; compose aborts if `POSTGRES_*` vars are missing.
 - Runtime env: `JWT_SECRET` and `DB_PASSWORD` have NO defaults — services fail to start without them.
 - Build a service image: `mvn -DskipTests package` then `docker build -t mediflow/<service> backend/<service>` (all 9 runnable services have `Dockerfile` + `.dockerignore`).
 - CI: `.github/workflows/ci.yml` runs `mvn -B -ntp verify`, frontend `npm ci` + `npm run build`, and builds all 9 images.
@@ -40,7 +40,7 @@ Enterprise patient-management platform: Spring Boot 3 microservices + React/TS +
 - Flyway migrations per service in `src/main/resources/db/migration/` (`V1__*.sql`; doctor/patient also have `V2`). `ddl-auto: validate` — schema comes from migrations, not Hibernate. Add a numbered migration for schema changes.
 - `notification-service` and `analytics-service` depend on the `appointment-service`/`billing-service` (and for analytics also `medical-record-service`) jars for event payload classes, so their migrations live in `src/main/resources/db/migration/{notification,analytics}/` and Flyway is scoped via `spring.flyway.locations` accordingly — the app's own `application.yml` (BOOT-INF/classes) wins over the dependency jars' bundled config (first-match-wins). analytics migrations: V1 (old `metric_snapshots`) + V2 (drops `metric_snapshots`, adds `processed_events` + `appointment_facts`/`invoice_facts`/`payment_facts`/`medical_record_facts`).
 - Tests override to H2 (PostgreSQL mode) with Flyway disabled and `create-drop` — test schema is generated from JPA entities. Exception: `analytics-service`, `medical-record-service`, and `notification-service` integration tests use Testcontainers PostgreSQL 16 with Flyway enabled (`disabledWithoutDocker = true`); analytics and notification tests also set the JVM default timezone to UTC for Testcontainers (pgjdbc rejects non-UTC tz on PG16).
-- Default `DB_URL` in each service yml points to a per-service DB (e.g. `patient_db`), but `.env` overrides to a single shared `mediflow` DB; env var wins.
+- Default `DB_URL` in each service yml points to a per-service DB (e.g. `patient_db`); the checked-in `.env` does not set `DB_URL`, so per-service DBs are used. Setting `DB_URL` in `.env` points all services at a single DB; env var wins.
 
 ## Kafka conventions (see docs/kafka-events.md)
 - Topic names: `{domain}.{event}.v1` (e.g. `patient.registered.v1`); DLQs: `dlq.<topic>`.
@@ -52,5 +52,5 @@ Enterprise patient-management platform: Spring Boot 3 microservices + React/TS +
 
 ## Conventions
 - `docs/coding-standards.md` is the style source: layered architecture, shared `ApiResponse` envelope, consistent exceptions, TS strict mode, functional React components.
-- Frontend scaffold is minimal (React 18, TS strict, Vite 5); CORS origin `http://localhost:5173`.
+- Frontend is a fully integrated SPA (React 18, TS strict, Vite 5, react-router-dom 6): API client with JWT refresh, AuthContext, role-based routing, and 12 pages wired to `/api/v1/**`. Dev server port is 3000; backend CORS allow-list defaults to `http://localhost:3000`.
 - Git: default branch `main`, remote `origin` (`https://github.com/Shivaganesh9/mediflow-patient-management-system.git`).
