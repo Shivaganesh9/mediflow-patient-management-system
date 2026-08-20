@@ -53,7 +53,7 @@ Admin/staff creation of Patient and Doctor profiles accepts an explicit `userId`
 
 ## 7. Other Controls
 
-- **CORS:** configured per service and globally on the gateway; default origin `http://localhost:3000` (env `CORS_ALLOWED_ORIGINS`). CSRF disabled; stateless sessions.
+- **CORS:** the API gateway is the single CORS owner for browser traffic (default origin `http://localhost:3000`, env `CORS_ALLOWED_ORIGINS`, `Allow-Credentials: true`); it deduplicates CORS headers emitted by downstream services through a global `DedupeResponseHeader` filter so proxied responses carry exactly one `Access-Control-Allow-Origin`. Services keep their own CORS config for direct development access. CSRF disabled; stateless sessions.
 - **Input validation:** Bean Validation (`jakarta.validation`) on request DTOs; handled centrally (see `GlobalExceptionHandler`).
 - **SQL:** parameterized via Spring Data JPA; schema from Flyway migrations, `ddl-auto: validate`.
 - **Not implemented:** rate limiting, HTTPS enforcement in service configs, service-to-service mutual auth, audit logging tables, secret management integration.

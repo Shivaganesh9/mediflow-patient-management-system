@@ -101,7 +101,7 @@ Revenue rules: `invoiced` excludes CANCELLED invoices (`sum_invoiced`); `collect
 
 ## 10. API Gateway (8080)
 
-Routes (Path predicate → service): `/api/v1/auth/**` → auth (8081), `/api/v1/patients/**` → patient (8083), `/api/v1/appointments/**` → appointment (8084), `/api/v1/medical-records/**` → medical-record (8091), `/api/v1/doctors/**` → doctor (8085), `/api/v1/invoices/**` → billing (8087), `/api/v1/notifications/**` → notification (8089), `/api/v1/analytics/**` → analytics (8088). Global CORS allow-list: `http://localhost:3000` (Vite dev) — set `CORS_ALLOWED_ORIGINS` to add origins.
+Routes (Path predicate → service): `/api/v1/auth/**` → auth (8081), `/api/v1/patients/**` → patient (8083), `/api/v1/appointments/**` → appointment (8084), `/api/v1/medical-records/**` → medical-record (8091), `/api/v1/doctors/**` → doctor (8085), `/api/v1/invoices/**` → billing (8087), `/api/v1/notifications/**` → notification (8089), `/api/v1/analytics/**` → analytics (8088). Global CORS allow-list: `http://localhost:3000` (Vite dev) — set `CORS_ALLOWED_ORIGINS` to add origins. The gateway is the single CORS owner and deduplicates CORS headers from downstream services (`DedupeResponseHeader` default filter) so proxied responses carry exactly one `Access-Control-Allow-Origin`.
 
 > Note: the gateway routes come from `application.yml` using direct service URLs (working in local dev). No `lb://` discovery routes exist in this repo (a Eureka registry is not provided).
 

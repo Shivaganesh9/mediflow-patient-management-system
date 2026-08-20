@@ -53,7 +53,7 @@ No lint or unit-test scripts exist.
 | Vite dev port | `3000` | `vite.config.ts` |
 | TS strict | `true` | `tsconfig.json` |
 
-**CORS note:** backend services and the gateway default their allowed origin to `http://localhost:3000` (the Vite dev server port). Set `CORS_ALLOWED_ORIGINS` only if you run Vite on a different port.
+**CORS note:** the API gateway owns browser CORS and defaults the allowed origin to `http://localhost:3000` (the Vite dev server port). Set `CORS_ALLOWED_ORIGINS` only if you run Vite on a different port. Services retain their own CORS config for direct development access; the gateway deduplicates CORS response headers so proxied responses carry exactly one `Access-Control-Allow-Origin`.
 
 ## Build / deploy
 ```bash

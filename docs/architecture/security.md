@@ -9,7 +9,7 @@
 - RBAC via endpoint matchers (patient, doctor, medical-record, billing, analytics role rules)
 - Resource ownership enforcement via JWT `uid` vs business id (patient/doctor profiles, medical records)
 - Flyway-managed schema with `ddl-auto: validate`; Bean Validation on DTOs; central `GlobalExceptionHandler`
-- CORS restricted to `http://localhost:3000` by default (Vite dev server; overridable via `CORS_ALLOWED_ORIGINS`)
+- CORS owned by the API gateway (default `http://localhost:3000`, overridable via `CORS_ALLOWED_ORIGINS`); downstream CORS headers are deduplicated at the gateway so proxied responses emit exactly one `Access-Control-Allow-Origin`
 
 ## Not implemented
 - OAuth2/OIDC, ABAC/permissions, TLS termination in service config, service-to-service mutual auth, audit logging tables, rate limiting, secret management integration

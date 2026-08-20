@@ -18,7 +18,7 @@ Enterprise patient-management platform: Spring Boot 3 microservices + React/TS +
 - Build all backend modules (from repo root): `mvn -DskipTests package` — no Maven wrapper; system `mvn` required
 - Build/run one service with its reactor deps: `mvn -pl backend/patient-service -am spring-boot:run`
 - Test one service: `mvn -pl backend/patient-service test` — tests use H2 (PostgreSQL mode), no external infra needed
-- Frontend: `cd frontend/mediflow-ui && npm run dev` (Vite dev server, port 3000 — the CORS allow-list defaults to `http://localhost:3000`; override with `CORS_ALLOWED_ORIGINS` if you change the port); build: `npm run build` (`tsc -b && vite build`). No lint/test scripts exist.
+- Frontend: `cd frontend/mediflow-ui && npm run dev` (Vite dev server, port 3000 — the gateway is the single CORS owner for browser traffic; its allow-list defaults to `http://localhost:3000`, override with `CORS_ALLOWED_ORIGINS` if you change the port. A global `DedupeResponseHeader` default filter collapses CORS headers from downstream services so proxied responses carry exactly one `Access-Control-Allow-Origin`); build: `npm run build` (`tsc -b && vite build`). No lint/test scripts exist.
 - Infra: `docker compose up -d` (Postgres 16 + Kafka 4.0, KRaft single node). Requires `.env` copied from `.env.example`; compose aborts if `POSTGRES_*` vars are missing.
 - Runtime env: `JWT_SECRET` and `DB_PASSWORD` have NO defaults — services fail to start without them.
 - Build a service image: `mvn -DskipTests package` then `docker build -t mediflow/<service> backend/<service>` (all 9 runnable services have `Dockerfile` + `.dockerignore`).

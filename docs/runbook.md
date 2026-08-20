@@ -120,7 +120,7 @@ npm install          # first time
 npm run dev          # Vite dev server on http://localhost:3000
 ```
 
-**CORS:** backend services and the gateway default their allowed origin to `http://localhost:3000` (the Vite dev server port), overridable via `CORS_ALLOWED_ORIGINS`. The frontend calls the gateway at `http://localhost:8080` by default (override with `VITE_API_BASE_URL`).
+**CORS:** the API gateway is the single CORS owner for browser traffic — it serves the allow-list (default `http://localhost:3000`, the Vite dev server port; override via `CORS_ALLOWED_ORIGINS`), sets `Allow-Credentials: true`, and deduplicates CORS response headers from downstream services via a global `DedupeResponseHeader` filter, so proxied responses carry exactly one `Access-Control-Allow-Origin`. Services still apply their own CORS config for direct development access. The frontend calls the gateway at `http://localhost:8080` by default (override with `VITE_API_BASE_URL`).
 
 ## 4. Verify services are running
 

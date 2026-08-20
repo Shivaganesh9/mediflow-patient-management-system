@@ -4,11 +4,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.gateway.config.GatewayProperties;
+import org.springframework.cloud.gateway.config.GlobalCorsProperties;
+import org.springframework.cloud.gateway.filter.FilterDefinition;
 import org.springframework.cloud.gateway.route.RouteDefinition;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.web.cors.CorsConfiguration;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -27,6 +31,9 @@ class GatewayRouteConfigTest {
 
     @Autowired
     private GatewayProperties gatewayProperties;
+
+    @Autowired
+    private GlobalCorsProperties globalCorsProperties;
 
     @Test
     void yamlRoutesAreAuthoritativeAndComplete() {
@@ -77,5 +84,36 @@ class GatewayRouteConfigTest {
                 .anyMatch(p -> p.getArgs().values().stream()
                         .map(String::valueOf)
                         .anyMatch(value -> value.contains(path)));
+    }
+
+    @Test
+    void gatewayIsSingleCorsOwnerForBrowserTraffic() {
+        CorsConfiguration cors = globalCorsProperties.getCorsConfigurations().get("/**");
+        assertNotNull(cors, "gateway must define a global CORS configuration for /**");
+        assertTrue(cors.getAllowedOrigins().contains("http://localhost:3000"),
+                "allowed origin must default to the Vite dev server");
+        assertTrue(cors.getAllowCredentials(), "CORS must allow credentials");
+        assertTrue(cors.getAllowedMethods().containsAll(
+                        List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")),
+                "CORS must allow the documented HTTP methods");
+        assertTrue(cors.getAllowedHeaders().containsAll(List.of("Authorization", "Content-Type")),
+                "CORS must allow the Authorization and Content-Type headers");
+    }
+
+    @Test
+    void corsResponseHeadersFromDownstreamServicesAreDeduped() {
+        Optional<FilterDefinition> dedupe = gatewayProperties.getDefaultFilters().stream()
+                .filter(f -> "DedupeResponseHeader".equals(f.getName()))
+                .findFirst();
+        assertTrue(dedupe.isPresent(),
+                "gateway must apply a default DedupeResponseHeader filter for CORS headers");
+        String args = dedupe.get().getArgs().values().stream()
+                .map(String::valueOf)
+                .collect(Collectors.joining(" "));
+        assertTrue(args.contains("Access-Control-Allow-Origin"));
+        assertTrue(args.contains("Access-Control-Allow-Credentials"));
+        assertTrue(args.contains("Access-Control-Allow-Methods"));
+        assertTrue(args.contains("Access-Control-Allow-Headers"));
+        assertTrue(args.contains("RETAIN_FIRST"));
     }
 }

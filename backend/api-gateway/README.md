@@ -61,6 +61,9 @@ mvn -pl backend/api-gateway test
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Allowed browser origins (Vite dev server) |
 | `EUREKA_URL` | `http://localhost:8761/eureka/` | Discovery (no registry exists yet) |
 
+## CORS ownership
+The gateway is the single CORS owner for browser traffic: `globalcors` defines the allow-list (default `http://localhost:3000`, `Allow-Credentials: true`, methods `GET,POST,PUT,PATCH,DELETE,OPTIONS`, headers `Authorization,Content-Type,X-Requested-With`). A global `DedupeResponseHeader` filter collapses CORS response headers added by downstream services so proxied responses carry exactly one `Access-Control-Allow-Origin`. Services retain their own CORS configuration for direct development access.
+
 ## Dependencies
 `spring-cloud-starter-gateway`, `spring-cloud-starter-netflix-eureka-client`, `spring-boot-starter-actuator`, `springdoc-openapi-starter-webflux-ui`. (Does **not** depend on `common-library`.)
 
