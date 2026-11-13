@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "MediFlow API",
-    "description": "MediFlow Patient Management System - API collection.\n\n## Setup\n1. Start infra: `docker compose up -d` (PostgreSQL + Kafka)\n2. Start services with the `seed` profile to load demo users/patients/doctors:\n   `mvn -pl backend/auth-service spring-boot:run` (and the other services; the `seed` profile is activated via `SPRING_PROFILES_ACTIVE=dev,seed` or your local convention).\n3. Import `MediFlow.postman_environment.json`, select the `MediFlow Local` environment.\n4. Run `Auth -> Login (ADMIN)`, `Login (DOCTOR)`, `Login (PATIENT)` once - they auto-store tokens in `adminToken`, `doctorToken`, `patientToken`.\n\n## Demo users (seed profile)\n| Role | Username | Password | Token variable |\n|---|---|---|---|\n| ADMIN | `admin` | `Admin@123` | `{{adminToken}}` |\n| DOCTOR | `doctor` | `Doctor@123` | `{{doctorToken}}` |\n| PATIENT | `patient` | `Patient@123` | `{{patientToken}}` |\n\n## Notes\n- All URLs route through the API gateway (`{{gatewayUrl}}`, port 8080).\n- Auth is JWT bearer; every protected request carries `Authorization: Bearer {{...Token}}`.\n- Login/register/refresh scripts auto-capture `accessToken` + `refreshToken`.",
+    "description": "MediFlow Patient Management System - API collection.\n\n## Setup\n1. Start infra: `docker compose up -d` (PostgreSQL + Kafka)\n2. Start services with the `seed` profile to load demo users/patients/doctors:\n   `mvn -pl backend/auth-service spring-boot:run` (and the other services; the `seed` profile is activated via `SPRING_PROFILES_ACTIVE=dev,seed` or your local convention).\n3. Import `MediFlow.postman_environment.json`, select the `MediFlow Local` environment.\n4. Run the `01 Auth -> Login (...)` requests once - they auto-store tokens in `adminToken`, `doctorToken`, `patientToken`, `nurseToken`, `billingToken`, `supportToken`.\n\n## Demo users (seed profile)\n| Role | Username | Password | Token variable |\n|---|---|---|---|\n| ADMIN | `admin` | `Admin@123` | `{{adminToken}}` |\n| DOCTOR | `doctor` | `Doctor@123` | `{{doctorToken}}` |\n| PATIENT | `patient` | `Patient@123` | `{{patientToken}}` |\n| NURSE | `nurse` | `Nurse@123` | `{{nurseToken}}` |\n| BILLING_STAFF | `billing` | `Billing@123` | `{{billingToken}}` |\n| SUPPORT | `support` | `Support@123` | `{{supportToken}}` |\n\n## Authorization matrix\nThe backend is authoritative; the same matrix is documented in `docs/security.md`:\n- Patient profile: create ADMIN/PATIENT/DOCTOR, update ADMIN/DOCTOR, delete ADMIN, read authenticated (PATIENT scoped to own).\n- Doctor profile: create/update ADMIN/DOCTOR (DOCTOR own only), read/search authenticated.\n- Appointments: all authenticated; PATIENT/DOCTOR scoped to their own identity, ADMIN/NURSE/BILLING_STAFF/SUPPORT broad.\n- Medical records: read ADMIN/DOCTOR(own)/PATIENT(own); NURSE/BILLING_STAFF/SUPPORT denied. Create/update ADMIN/DOCTOR(own); only ADMIN may change `patientId`.\n- Billing: writes ADMIN/BILLING_STAFF; reads ADMIN/BILLING_STAFF/DOCTOR/NURSE/SUPPORT and PATIENT (own only).\n- Analytics: ADMIN/DOCTOR only.\n- Missing/invalid token -> 401; authenticated but not permitted or not the owner -> 403.\n\n## Notes\n- All URLs route through the API gateway (`{{gatewayUrl}}`, port 8080).\n- Auth is JWT bearer; every protected request carries `Authorization: Bearer {{...Token}}`.\n- Login/register/refresh scripts auto-capture `accessToken` + `refreshToken`.\n- Folder `09 Authorization (RBAC)` contains negative checks (expected 401/403). Run it after the seed logins; it needs the seeded `{{patientId}}`, `{{doctorId}}`, `{{invoiceId}}` and `{{medicalRecordId}}`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -260,7 +260,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"newpatient\",\n  \"email\": \"newpatient@mediflow.io\",\n  \"password\": \"Test@12345\",\n  \"fullName\": \"New Patient\",\n  \"phone\": \"+1 555 0100\",\n  \"role\": \"PATIENT\"\n}"
+              "raw": "{\n  \"username\": \"newpatient\",\n  \"email\": \"newpatient@mediflow.io\",\n  \"password\": \"Test@12345\",\n  \"fullName\": \"New Patient\",\n  \"phone\": \"+1 555 0100\"\n}"
             },
             "url": {
               "raw": "{{authUrl}}/register",
@@ -462,6 +462,132 @@
           ]
         },
         {
+          "name": "Login (NURSE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usernameOrEmail\": \"nurse\",\n  \"password\": \"Nurse@123\"\n}"
+            },
+            "url": {
+              "raw": "{{authUrl}}/login",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('NURSE token captured', () => pm.expect(json.data.accessToken).to.not.be.empty);",
+                  "pm.environment.set('nurseToken', json.data.accessToken);",
+                  "pm.environment.set('accessToken', json.data.accessToken);",
+                  "pm.environment.set('refreshToken', json.data.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (BILLING_STAFF)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usernameOrEmail\": \"billing\",\n  \"password\": \"Billing@123\"\n}"
+            },
+            "url": {
+              "raw": "{{authUrl}}/login",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('BILLING_STAFF token captured', () => pm.expect(json.data.accessToken).to.not.be.empty);",
+                  "pm.environment.set('billingToken', json.data.accessToken);",
+                  "pm.environment.set('accessToken', json.data.accessToken);",
+                  "pm.environment.set('refreshToken', json.data.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (SUPPORT)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usernameOrEmail\": \"support\",\n  \"password\": \"Support@123\"\n}"
+            },
+            "url": {
+              "raw": "{{authUrl}}/login",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "login"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('SUPPORT token captured', () => pm.expect(json.data.accessToken).to.not.be.empty);",
+                  "pm.environment.set('supportToken', json.data.accessToken);",
+                  "pm.environment.set('accessToken', json.data.accessToken);",
+                  "pm.environment.set('refreshToken', json.data.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Refresh token",
           "request": {
             "method": "POST",
@@ -569,6 +695,40 @@
                   "pm.test('Success flag', () => pm.expect(pm.response.json().success).to.be.true);"
                 ],
                 "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me after logout -> 401",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              }
+            ],
+            "description": "The access token presented to /logout is revoked in the shared Redis registry, so it is rejected immediately here (auth-service) and by every other service that validates the token. This must return 401.",
+            "url": {
+              "raw": "{{authUrl}}/me",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Revoked token is rejected', () => pm.response.to.have.status(401));"
+                ]
               }
             }
           ]
@@ -1998,6 +2158,935 @@
                   "pm.test('Success flag', () => pm.expect(pm.response.json().success).to.be.true);"
                 ],
                 "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "09 Authorization (RBAC)",
+      "description": "Negative and positive authorization checks for the documented role matrix. Run after the seed logins. Expected failures are assertions, not errors: 401 = no/invalid token, 403 = authenticated but role/ownership not permitted.",
+      "item": [
+        {
+          "name": "Unauthenticated patient list -> 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{patientUrl}}",
+              "host": [
+                "{{patientUrl}}"
+              ],
+              "path": []
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update patient profile as PATIENT -> 403",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{patientToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{patientUrl}}/{{patientId}}",
+              "host": [
+                "{{patientUrl}}"
+              ],
+              "path": [
+                "{{patientId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Smith\",\n  \"email\": \"rbac-patient@mediflow.io\",\n  \"phone\": \"555-0100\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update patient profile as NURSE -> 403",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{nurseToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{patientUrl}}/{{patientId}}",
+              "host": [
+                "{{patientUrl}}"
+              ],
+              "path": [
+                "{{patientId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Smith\",\n  \"email\": \"rbac-patient@mediflow.io\",\n  \"phone\": \"555-0100\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create patient profile as SUPPORT -> 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supportToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{patientUrl}}",
+              "host": [
+                "{{patientUrl}}"
+              ],
+              "path": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Smith\",\n  \"email\": \"rbac-patient@mediflow.io\",\n  \"phone\": \"555-0100\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete patient profile as DOCTOR -> 403",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doctorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{patientUrl}}/{{patientId}}",
+              "host": [
+                "{{patientUrl}}"
+              ],
+              "path": [
+                "{{patientId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create doctor profile as NURSE -> 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{nurseToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{doctorUrl}}",
+              "host": [
+                "{{doctorUrl}}"
+              ],
+              "path": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Doe\",\n  \"email\": \"rbac-doctor@mediflow.io\",\n  \"phone\": \"555-0100\",\n  \"specialty\": \"Cardiology\",\n  \"yearsOfExperience\": 12,\n  \"department\": \"Cardiology\",\n  \"consultationFee\": 150\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update doctor profile as SUPPORT -> 403",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supportToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{doctorUrl}}/{{doctorId}}",
+              "host": [
+                "{{doctorUrl}}"
+              ],
+              "path": [
+                "{{doctorId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firstName\": \"Jane\",\n  \"lastName\": \"Doe\",\n  \"email\": \"rbac-doctor@mediflow.io\",\n  \"phone\": \"555-0100\",\n  \"specialty\": \"Cardiology\",\n  \"yearsOfExperience\": 12,\n  \"department\": \"Cardiology\",\n  \"consultationFee\": 150\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get medical record as NURSE -> 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{nurseToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{medicalRecordUrl}}/{{medicalRecordId}}",
+              "host": [
+                "{{medicalRecordUrl}}"
+              ],
+              "path": [
+                "{{medicalRecordId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create medical record as NURSE -> 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{nurseToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{medicalRecordUrl}}",
+              "host": [
+                "{{medicalRecordUrl}}"
+              ],
+              "path": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"{{patientId}}\",\n  \"doctorId\": \"{{doctorId}}\",\n  \"encounterDate\": \"2026-11-12\",\n  \"chiefComplaint\": \"RBAC check\",\n  \"diagnosis\": \"None\",\n  \"recordType\": \"CONSULTATION\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reassign medical record patient as DOCTOR -> 403",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doctorToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{medicalRecordUrl}}/{{medicalRecordId}}",
+              "host": [
+                "{{medicalRecordUrl}}"
+              ],
+              "path": [
+                "{{medicalRecordId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"11111111-1111-1111-1111-111111111111\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create invoice as DOCTOR -> 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{doctorToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{billingUrl}}",
+              "host": [
+                "{{billingUrl}}"
+              ],
+              "path": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"{{patientId}}\",\n  \"items\": [\n    {\n      \"description\": \"RBAC check\",\n      \"quantity\": 1,\n      \"unitPrice\": 10\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Record payment as NURSE -> 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{nurseToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{billingUrl}}/{{invoiceId}}/payments",
+              "host": [
+                "{{billingUrl}}"
+              ],
+              "path": [
+                "{{invoiceId}}",
+                "payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 10,\n  \"method\": \"CARD\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read invoices as SUPPORT -> 200",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{supportToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{billingUrl}}",
+              "host": [
+                "{{billingUrl}}"
+              ],
+              "path": []
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Analytics summary as NURSE -> 403",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{nurseToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{analyticsUrl}}/dashboard/summary",
+              "host": [
+                "{{analyticsUrl}}"
+              ],
+              "path": [
+                "dashboard",
+                "summary"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "10 Account Lifecycle (ADMIN)",
+      "description": "Administrative identity lifecycle. Every change revokes all sessions of the target account.",
+      "item": [
+        {
+          "name": "List users (ADMIN)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{authUrl}}/users",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns accounts', () => pm.expect(json.data).to.be.an('array').and.not.empty);",
+                  "const target = json.data.find(u => u.username === 'newpatient') || json.data.find(u => !u.roles.includes('ADMIN'));",
+                  "if (target) { pm.environment.set('userId', target.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get user by ID (ADMIN)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{authUrl}}/users/{{userId}}",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Status field present', () => pm.expect(json.data.status).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deactivate user (ADMIN)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"INACTIVE\",\n  \"reason\": \"Postman lifecycle check\"\n}"
+            },
+            "description": "All sessions of the target are revoked; its previously issued access tokens are rejected everywhere.",
+            "url": {
+              "raw": "{{authUrl}}/users/{{userId}}/status",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}",
+                "status"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Account is INACTIVE', () => pm.expect(json.data.status).to.eql('INACTIVE'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reactivate user (ADMIN)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\"\n}"
+            },
+            "url": {
+              "raw": "{{authUrl}}/users/{{userId}}/status",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}",
+                "status"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Account is ACTIVE', () => pm.expect(json.data.status).to.eql('ACTIVE'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Change roles to NURSE (ADMIN)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roles\": [\"NURSE\"]\n}"
+            },
+            "description": "Roles are embedded in access tokens, so every session of the target is revoked and a new login is required.",
+            "url": {
+              "raw": "{{authUrl}}/users/{{userId}}/roles",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}",
+                "roles"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Role is NURSE', () => pm.expect(json.data.roles).to.include('NURSE'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Restore PATIENT role (ADMIN)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roles\": [\"PATIENT\"]\n}"
+            },
+            "url": {
+              "raw": "{{authUrl}}/users/{{userId}}/roles",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "users",
+                "{{userId}}",
+                "roles"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Role is PATIENT', () => pm.expect(json.data.roles).to.include('PATIENT'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "11 Password Security (destructive)",
+      "description": "Destructive password flows. They revoke every session of the affected account - run them last and update the login bodies afterwards.",
+      "item": [
+        {
+          "name": "Request password reset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{resetEmail}}\"\n}"
+            },
+            "description": "Responds identically for unknown addresses. Returns data.token only when AUTH_PASSWORD_RESET_EXPOSE_TOKEN=true (local/dev).",
+            "url": {
+              "raw": "{{authUrl}}/password-reset/request",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "password-reset",
+                "request"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Generic success', () => pm.expect(json.success).to.be.true);",
+                  "if (json.data && json.data.token) { pm.environment.set('resetToken', json.data.token); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm password reset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{resetToken}}\",\n  \"newPassword\": \"Reset@12345\"\n}"
+            },
+            "description": "Single-use token; revokes all sessions. Needs AUTH_PASSWORD_RESET_EXPOSE_TOKEN=true to run end to end locally.",
+            "url": {
+              "raw": "{{authUrl}}/password-reset/confirm",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "password-reset",
+                "confirm"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Change password (destructive)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{currentPassword}}\",\n  \"newPassword\": \"{{newPassword}}\"\n}"
+            },
+            "description": "Requires the current password, then revokes every session of the caller (including the token used here).",
+            "url": {
+              "raw": "{{authUrl}}/change-password",
+              "host": [
+                "{{authUrl}}"
+              ],
+              "path": [
+                "change-password"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Session ended message', () => pm.expect(pm.response.json().message).to.include('sign in again'));"
+                ]
               }
             }
           ]

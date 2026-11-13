@@ -279,6 +279,85 @@ class MedicalRecordControllerIntegrationTest extends AbstractMedicalRecordIntegr
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    void getMedicalRecordDeniedForNurse() throws Exception {
+        String recordId = createRecord(UUID.randomUUID(), "CONSULTATION",
+                token("doctor1", UUID.randomUUID(), List.of("DOCTOR")));
+        String nurseToken = token("nurse1", UUID.randomUUID(), List.of("NURSE"));
+
+        mockMvc.perform(get("/api/v1/medical-records/" + recordId)
+                        .header("Authorization", "Bearer " + nurseToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void nurseCannotCreateOrUpdateMedicalRecords() throws Exception {
+        String nurseToken = token("nurse1", UUID.randomUUID(), List.of("NURSE"));
+        String recordId = createRecord(UUID.randomUUID(), "CONSULTATION",
+                token("doctor1", UUID.randomUUID(), List.of("DOCTOR")));
+
+        mockMvc.perform(post("/api/v1/medical-records")
+                        .header("Authorization", "Bearer " + nurseToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(recordPayload(UUID.randomUUID(), "CONSULTATION")))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/v1/medical-records/" + recordId)
+                        .header("Authorization", "Bearer " + nurseToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"notes\":\"Nurse edit\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void treatingDoctorCannotReassignRecordToAnotherPatient() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        UUID doctorId = UUID.randomUUID();
+        String doctorToken = token("doctor1", doctorId, List.of("DOCTOR"));
+        String recordId = createRecord(patientId, "CONSULTATION", doctorToken);
+
+        mockMvc.perform(put("/api/v1/medical-records/" + recordId)
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"patientId\":\"" + UUID.randomUUID() + "\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void adminCanReassignRecordToAnotherPatient() throws Exception {
+        UUID otherPatientId = UUID.randomUUID();
+        String adminToken = token("admin", null, List.of("ADMIN"));
+        String recordId = createRecord(UUID.randomUUID(), "CONSULTATION", adminToken);
+
+        mockMvc.perform(put("/api/v1/medical-records/" + recordId)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"patientId\":\"" + otherPatientId + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.patientId").value(otherPatientId.toString()));
+    }
+
+    @Test
+    void unknownRoleCannotReadMedicalRecords() throws Exception {
+        String recordId = createRecord(UUID.randomUUID(), "CONSULTATION",
+                token("doctor1", UUID.randomUUID(), List.of("DOCTOR")));
+        String legacyToken = token("legacy-staff", UUID.randomUUID(), List.of("STAFF"));
+
+        mockMvc.perform(get("/api/v1/medical-records/" + recordId)
+                        .header("Authorization", "Bearer " + legacyToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/v1/medical-records")
+                        .header("Authorization", "Bearer " + legacyToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void unauthenticatedRequestIsRejected() throws Exception {
+        mockMvc.perform(get("/api/v1/medical-records"))
+                .andExpect(status().isUnauthorized());
+    }
+
     private String createRecord(UUID patientId, String recordType, String token) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/v1/medical-records")
                         .header("Authorization", "Bearer " + token)

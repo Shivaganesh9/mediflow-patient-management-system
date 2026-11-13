@@ -1,6 +1,6 @@
 # MediFlow Frontend Verification & Gap Report
 
-*Status: verified against the running stack (2026-08-18). Frontend builds with `tsc -b && vite build` (TS strict) and was smoke-tested against the live gateway + auth/patient/doctor services.*
+*Status: verified against the running stack (2026-08-18); role-gate findings resolved and re-verified 2026-11-12. Frontend builds with `tsc -b && vite build` (TS strict).*
 
 ## 1. What was verified (all pass)
 
@@ -29,19 +29,13 @@
 
 ## 2. Gaps / findings
 
-1. **Frontend role gates wider than backend grants (documented in security.md §4)** — the create/edit
-   UI is shown to `NURSE`/`BILLING_STAFF`/`SUPPORT` on Patients/Doctors pages, but the backend
-   patient POST is `ADMIN, PATIENT, DOCTOR, STAFF` and doctor POST/PUT is `ADMIN, STAFF, DOCTOR`,
-   where `STAFF` is a dead grant (not in `UserRole`, no seeded row). Effective backend grants are
-   ADMIN/DOCTOR (and PATIENT for patient create), so staff-role users would see buttons that return
-   403. Aligning requires either replacing literal `"STAFF"` in SecurityConfig with
-   `NURSE`/`BILLING_STAFF`/`SUPPORT`, or narrowing the frontend gates.
-2. **No `STAFF` enum value** (see security.md) — frontend code never references `STAFF`, backend rules do.
-3. **AppointmentsPage "isStaff"** includes NURSE/BILLING_STAFF/SUPPORT; appointment endpoints are
-   authenticated-for-all so this is benign.
+*All role-gate findings below were resolved 2026-11-12 by narrowing the frontend gates to the backend matrix; the backend remains authoritative.*
+
+1. **Frontend role gates now match backend grants (resolved)** — the Patients/Doctors create/edit UI is limited to `ADMIN`/`DOCTOR` (`PATIENT` for patient create). The dead `STAFF` literal was removed from patient/doctor `SecurityConfig`, so `NURSE`/`BILLING_STAFF`/`SUPPORT` are denied at both layers (the frontend no longer shows buttons that would 403).
+2. **No `STAFF` enum value** (resolved) — the obsolete `STAFF` grant was removed from backend matchers and from appointment/billing staff role sets; `ROLE_STAFF` is now denied like any unknown role.
+3. **AppointmentsPage "isStaff"** includes NURSE/BILLING_STAFF/SUPPORT; appointment endpoints are authenticated-for-all with staff broad access, so this matches the backend.
 4. **Analytics nav/page gated to ADMIN/DOCTOR** — matches analytics `ANALYTICS_ROLES`; consistent.
-5. **Medical-records route allows NURSE/PATIENT read** — backend GET is authenticated; write gated to
-   ADMIN/DOCTOR on both sides; consistent.
+5. **Medical-records route now allows ADMIN/DOCTOR/PATIENT only (resolved)** — the route/nav no longer includes NURSE, matching the backend (NURSE/BILLING_STAFF/SUPPORT denied PHI access); write is gated to ADMIN/DOCTOR on both sides.
 
 ## 3. Note on register
 

@@ -1,5 +1,8 @@
 package com.mediflow.doctor.security;
 
+import com.mediflow.common.security.RevocationUnavailableException;
+import com.mediflow.common.security.SecurityResponses;
+import com.mediflow.common.security.TokenRevocationGuard;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -25,18 +28,37 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String UID_CLAIM = "uid";
 
     private final JwtProvider jwtProvider;
+    private final TokenRevocationGuard tokenRevocationGuard;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
-            throws ServletException, IOException {
-        String header = request.getHeader("Authorization");
-        if (header != null && header.startsWith("Bearer ")) {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
+                                    FilterChain chain) throws ServletException, IOException {
+        String authorization = request.getHeader("Authorization");
+        if (authorization != null && authorization.startsWith("Bearer ")) {
             try {
-                Claims claims = jwtProvider.parse(header.substring(7));
+                Claims claims = jwtProvider.parse(authorization.substring(7));
+
+                // A refresh token must never authenticate an API request.
+                if (tokenRevocationGuard.isRefreshToken(claims)) {
+                    SecurityContextHolder.clearContext();
+                    chain.doFilter(request, response);
+                    return;
+                }
+                // Revocation state is shared through Redis: a logout in auth-service is seen here.
+                if (tokenRevocationGuard.isRevoked(claims)) {
+                    SecurityContextHolder.clearContext();
+                    chain.doFilter(request, response);
+                    return;
+                }
+
                 String username = claims.getSubject();
                 List<?> roles = claims.get("roles", List.class);
-                Collection<SimpleGrantedAuthority> authorities = roles == null ? List.<SimpleGrantedAuthority>of() : roles.stream()
-                        .map(String::valueOf).map(role -> new SimpleGrantedAuthority("ROLE_" + role)).toList();
+                Collection<SimpleGrantedAuthority> authorities = roles == null
+                        ? List.of()
+                        : roles.stream()
+                                .map(String::valueOf)
+                                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                                .toList();
 
                 AuthenticatedUser principal =
                         new AuthenticatedUser(username, extractUserId(claims), extractRoles(roles));
@@ -45,6 +67,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         new UsernamePasswordAuthenticationToken(principal, null, authorities);
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
+            } catch (RevocationUnavailableException ex) {
+                // Fail closed: never authenticate while revocation state cannot be checked.
+                SecurityResponses.serviceUnavailable(response,
+                        "Authentication is temporarily unavailable. Please retry shortly.");
+                return;
             } catch (RuntimeException ignored) {
                 SecurityContextHolder.clearContext();
             }

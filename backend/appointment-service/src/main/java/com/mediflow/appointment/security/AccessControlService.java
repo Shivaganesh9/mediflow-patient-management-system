@@ -14,7 +14,7 @@ import java.util.UUID;
 @Component
 public class AccessControlService {
 
-    private static final Set<String> STAFF_ROLES = Set.of("NURSE", "BILLING_STAFF", "SUPPORT", "STAFF");
+    private static final Set<String> STAFF_ROLES = Set.of("NURSE", "BILLING_STAFF", "SUPPORT");
 
     public Optional<AuthenticatedUser> currentUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();

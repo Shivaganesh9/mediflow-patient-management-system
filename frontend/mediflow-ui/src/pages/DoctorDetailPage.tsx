@@ -17,7 +17,7 @@ export function DoctorDetailPage() {
   const [showAvailability, setShowAvailability] = useState(false);
   const [showLeave, setShowLeave] = useState(false);
 
-  const canManage = hasRole('ADMIN', 'DOCTOR', 'NURSE', 'BILLING_STAFF', 'SUPPORT');
+  const canManage = hasRole('ADMIN', 'DOCTOR');
 
   const detail = useAsync(() => doctorsApi.get(doctorId), [doctorId]);
   const availability = useAsync(() => doctorsApi.availability.list(doctorId), [doctorId]);

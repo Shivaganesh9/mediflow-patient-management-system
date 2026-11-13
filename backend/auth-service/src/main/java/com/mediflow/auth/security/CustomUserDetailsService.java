@@ -2,7 +2,6 @@ package com.mediflow.auth.security;
 
 import com.mediflow.auth.entity.User;
 import com.mediflow.auth.repository.UserRepository;
-import com.mediflow.common.enums.AccountStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -31,7 +30,8 @@ public class CustomUserDetailsService implements UserDetailsService {
         return org.springframework.security.core.userdetails.User.withUsername(user.getUsername())
                 .password(user.getPassword())
                 .authorities(authorities)
-                .disabled(!AccountStatus.ACTIVE.equals(user.getStatus()))
+                // Account status is enforced after the password is verified (AuthServiceImpl),
+                // so a suspended/deactivated account cannot be detected without valid credentials.
                 .build();
     }
 }

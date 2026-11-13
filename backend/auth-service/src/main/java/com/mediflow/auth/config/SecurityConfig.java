@@ -42,7 +42,14 @@ public class SecurityConfig {
                 .exceptionHandling(exceptions -> exceptions
                     .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh", "/swagger-ui/**", "/v3/api-docs/**", "/actuator/health").permitAll()
+                        .requestMatchers("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh",
+                                "/api/v1/auth/password-reset/**",
+                                "/swagger-ui/**", "/v3/api-docs/**", "/actuator/health").permitAll()
+                        // Administrative identity lifecycle (status, roles, user directory).
+                        .requestMatchers("/api/v1/auth/users/**").hasRole("ADMIN")
+                        // Service-to-service identity lookup: never public, and only reachable by
+                        // non-patient callers (patient-service/doctor-service forward a staff token).
+                        .requestMatchers("/internal/**").hasAnyRole("ADMIN", "DOCTOR", "NURSE", "BILLING_STAFF", "SUPPORT")
                         .anyRequest().authenticated())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authenticationProvider(authenticationProvider())

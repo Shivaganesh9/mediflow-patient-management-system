@@ -479,3 +479,38 @@ button { font: inherit; cursor: pointer; }
   .toolbar { width: 100%; }
   .search-input { flex: 1; min-width: 140px; }
 }
+
+/* Authentication lifecycle: session notices, password flows */
+.form-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #eef6ee;
+  color: #26663a;
+  font-size: 0.9rem;
+}
+
+.login-links {
+  margin: 16px 0 0;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.login-links a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.login-links a:hover {
+  text-decoration: underline;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}

@@ -4,6 +4,9 @@ import { ProtectedRoute } from './routes/ProtectedRoute';
 import { RoleRoute } from './routes/RoleRoute';
 import { NotFound } from './components/PageState';
 import { LoginPage } from './pages/LoginPage';
+import { ChangePasswordPage } from './pages/ChangePasswordPage';
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { PatientsPage } from './pages/PatientsPage';
 import { PatientDetailPage } from './pages/PatientDetailPage';
@@ -20,6 +23,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route
         element={
           <ProtectedRoute>
@@ -36,13 +41,14 @@ export default function App() {
         <Route
           path="/medical-records"
           element={
-            <RoleRoute roles={['ADMIN', 'DOCTOR', 'NURSE', 'PATIENT']}>
+            <RoleRoute roles={['ADMIN', 'DOCTOR', 'PATIENT']}>
               <MedicalRecordsPage />
             </RoleRoute>
           }
         />
         <Route path="/billing" element={<BillingPage />} />
         <Route path="/billing/:invoiceId" element={<InvoiceDetailPage />} />
+        <Route path="/account/password" element={<ChangePasswordPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route
           path="/analytics"

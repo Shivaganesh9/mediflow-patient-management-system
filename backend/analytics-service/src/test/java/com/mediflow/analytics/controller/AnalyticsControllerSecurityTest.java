@@ -81,6 +81,17 @@ class AnalyticsControllerSecurityTest extends AbstractAnalyticsIntegrationTest {
     }
 
     @Test
+    void nonAnalyticsRolesAreForbidden() throws Exception {
+        for (String role : List.of("NURSE", "BILLING_STAFF", "SUPPORT", "STAFF")) {
+            String roleToken = token(role.toLowerCase(), UUID.randomUUID(), List.of(role));
+
+            mockMvc.perform(get("/api/v1/analytics/dashboard/summary")
+                            .header("Authorization", "Bearer " + roleToken))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
     void expiredTokenIsRejected() throws Exception {
         String expiredToken = io.jsonwebtoken.Jwts.builder()
                 .subject("admin")

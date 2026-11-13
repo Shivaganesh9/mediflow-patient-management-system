@@ -14,7 +14,7 @@ const navigation: NavItem[] = [
   { to: '/appointments', label: 'Appointments' },
   { to: '/doctors', label: 'Doctors' },
   { to: '/patients', label: 'Patients', roles: ['ADMIN', 'DOCTOR', 'NURSE', 'BILLING_STAFF', 'SUPPORT'] },
-  { to: '/medical-records', label: 'Medical Records', roles: ['ADMIN', 'DOCTOR', 'NURSE', 'PATIENT'] },
+  { to: '/medical-records', label: 'Medical Records', roles: ['ADMIN', 'DOCTOR', 'PATIENT'] },
   { to: '/billing', label: 'Billing', roles: ['ADMIN', 'DOCTOR', 'NURSE', 'BILLING_STAFF', 'SUPPORT', 'PATIENT'] },
   { to: '/notifications', label: 'Notifications' },
   { to: '/analytics', label: 'Analytics', roles: ['ADMIN', 'DOCTOR'] },
@@ -77,6 +77,9 @@ export function AppShell() {
               <strong>{user?.fullName ?? user?.username}</strong>
               <span>{user?.roles.join(', ')}</span>
             </div>
+            <Link to="/account/password" className="btn secondary-btn">
+              Change password
+            </Link>
             <button className="btn secondary-btn" type="button" onClick={() => void logout()}>
               Sign out
             </button>

@@ -23,6 +23,7 @@ docker compose up -d
 |---|---|---|---|
 | postgres | `postgres:16` | `5432` | One Postgres instance; `infrastructure/docker/postgres/init-databases.sql` creates the 8 per-service DBs on first boot |
 | kafka | `apache/kafka:4.0.0` | `9092` | Single-node KRaft (broker + controller), no Zookeeper |
+| redis | `redis:7.2-alpine` | `6379` | Shared access-token revocation store. Every service must point at the same instance (`REDIS_HOST`/`REDIS_PORT`) |
 
 **PostgreSQL timezone convention:** all services run the JVM with `-Duser.timezone=Asia/Kolkata`
 (set via the parent POM's `spring-boot-maven-plugin` `jvmArguments` for `mvn spring-boot:run`, and in
@@ -36,12 +37,35 @@ URL/property parameter and always uses the JVM default timezone, so the JVM flag
 Verify infra:
 
 ```bash
-docker compose ps                          # both containers running
+docker compose ps                          # all three containers running
 docker exec -it $(docker compose ps -q postgres) pg_isready -U postgres
 docker exec -it $(docker compose ps -q kafka) /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
+docker exec -it $(docker compose ps -q redis) redis-cli ping
 ```
 
-The last command lists topics (created on demand by producers).
+The Kafka command lists topics (created on demand by producers); the Redis command must answer `PONG`.
+Redis is a **mandatory** dependency for JWT validation: with `SECURITY_REVOCATION_FAIL_OPEN=false`
+(the default) every protected request returns **503** while the store is unreachable.
+
+### 1.1 Authentication / revocation environment variables
+
+All have safe defaults except `JWT_SECRET`, which is required. Template values live in `.env.example`.
+
+| Variable | Default | Used by | Meaning |
+|---|---|---|---|
+| `JWT_SECRET` | — (required) | all services | HS256 signing key; must be ≥ 256 bits, identical everywhere |
+| `JWT_EXPIRATION` / `JWT_REFRESH_EXPIRATION` | `900000` / `604800000` ms | auth-service | access (15 min) / refresh (7 days) lifetime |
+| `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | all services | shared revocation store (must be the same instance) |
+| `SECURITY_REVOCATION_ENABLED` | `true` | all services | `false` installs the no-op registry — tests/local only |
+| `SECURITY_REVOCATION_FAIL_OPEN` | `false` | all services | `true` accepts tokens when Redis is down (unsafe) |
+| `SECURITY_REVOCATION_KEY_PREFIX` | `mediflow:revoke:` | all services | Redis key namespace |
+| `SECURITY_REVOCATION_MARKER_TTL` | `7d` | all services | lifetime of `sid`/`uid` revocation markers (must exceed the access-token lifetime) |
+| `SECURITY_LOGIN_MAX_FAILED_ATTEMPTS` | `5` | auth-service | failures before a temporary lockout |
+| `SECURITY_LOGIN_LOCKOUT_DURATION` | `15m` | auth-service | lockout window |
+| `AUTH_REFRESH_REUSE_GRACE` | `10s` | auth-service | duplicate-refresh window treated as a retry instead of theft |
+| `AUTH_PASSWORD_RESET_TOKEN_TTL` | `30m` | auth-service | password-reset token lifetime |
+| `AUTH_PASSWORD_RESET_EXPOSE_TOKEN` | `false` | auth-service | return the raw reset token in the response (dev/test only; there is no mail delivery) |
+| `AUTH_SERVICE_URL` | `http://localhost:8081` | patient/doctor | internal identity lookup for profile validation |
 
 ## 2. Start backend services
 
@@ -160,7 +184,8 @@ environments/variables, and automate multi-step flows (login → protected call 
 **Concepts.**
 - **Collection** — a reusable group of saved requests (`testing/postman/MediFlow.postman_collection.json`).
   Folders: `00 Health`, `01 Auth`, `02 Patient`, `03 Doctor`, `04 Appointment`, `05 Medical Record`,
-  `06 Billing`, `07 Notification`, `08 Analytics`.
+  `06 Billing`, `07 Notification`, `08 Analytics`, `09 Authorization (RBAC)`,
+  `10 Account Lifecycle (ADMIN)`, `11 Password Security (destructive)`.
 - **Environment** — a named set of variables (`testing/postman/MediFlow.postman_environment.json`,
   "MediFlow Local"). Select it from the environment dropdown (top-right) so `{{...}}` placeholders resolve.
 - **Variables** — `{{name}}` placeholders resolved at runtime. Local env defines `gatewayUrl`, `authUrl`,
@@ -175,10 +200,18 @@ environments/variables, and automate multi-step flows (login → protected call 
 - **Protected APIs use the JWT.** Every protected request sends `Authorization: Bearer {{accessToken}}`
   as a header; the gateway forwards it to the target service.
 - **Refresh rotates both tokens.** `01 Auth → Refresh token` posts `{"refreshToken":"{{refreshToken}}"}`;
-  the script overwrites `accessToken` and `refreshToken` with the rotated pair. (Backend revokes the old
-  refresh token — see `docs/security.md`.)
-- **Logout revokes.** `01 Auth → Logout` calls `/api/v1/auth/logout` with the bearer token; it clears the
-  user's refresh tokens server-side.
+  the script overwrites `accessToken` and `refreshToken` with the rotated pair. The backend revokes the old
+  refresh token; replaying it outside `AUTH_REFRESH_REUSE_GRACE` revokes the whole session family (see
+  `docs/security.md` §1).
+- **Logout revokes the session and the token.** `01 Auth → Logout` calls `/api/v1/auth/logout`; the
+  refresh-token family and the presented access token are revoked in the shared Redis registry, so
+  `Me after logout -> 401` (the next request in the folder) must return **401**.
+- **Account lifecycle.** `10 Account Lifecycle (ADMIN)` lists accounts (capturing `userId`), reads one,
+  deactivates/reactivates it and changes roles (`NURSE` then back to `PATIENT`). Every change revokes the
+  target's sessions; the admin cannot target themselves.
+- **Password flows are destructive.** `11 Password Security (destructive)` requests/confirms a reset and
+  changes a password. Both revoke every session; run this folder last and update the login bodies
+  afterwards. The reset request returns `data.token` only with `AUTH_PASSWORD_RESET_EXPOSE_TOKEN=true`.
 
 **Running requests.**
 - **Single request** — open it and click **Send**. Response body/tests appear below.
@@ -196,37 +229,100 @@ environments/variables, and automate multi-step flows (login → protected call 
   or were populated by a preceding create call.
 - **500** — server error. Check the target service's terminal; `GlobalExceptionHandler` logs
   `ERROR Unexpected error` with the stack trace.
+- **429** — the account is temporarily locked after repeated wrong passwords. Wait for
+  `SECURITY_LOGIN_LOCKOUT_DURATION` (default 15 min) or reset `locked_until` in `mediflow_auth_db`.
+- **503** — Redis (revocation store) is unreachable and the service fails closed. Start it
+  (`docker compose up -d redis`) or fix `REDIS_HOST`/`REDIS_PORT`.
 
 > The collection imports via **Import → File**; then select the `MediFlow Local` environment. For a fresh
 > DB, run `docker compose down -v && docker compose up -d` then restart services with the `seed` profile
 > (section 2.1) so seeded accounts/IDs exist.
 
+### 5.2 Frontend session-expiry checks (manual)
+
+The SPA has no automated test harness; verify the session behaviour in a browser:
+
+1. **Proactive refresh.** Start services with `JWT_EXPIRATION=60000` (1 min), sign in, wait ~40 s and
+   click around: requests still succeed and `mediflow.accessToken` changed (refresh happened before expiry).
+2. **Reactive refresh.** DevTools → Application → delete `mediflow.accessExpiresAt`, then navigate: the
+   client hits a 401, refreshes once and retries; the page loads without a logout.
+3. **Expired session feedback.** Delete `mediflow.refreshToken` (or stop auth-service), then navigate: the
+   session is cleared and the login page shows *"Your session has expired. Please sign in again."*
+4. **Reload restoration.** Reload a signed-in tab: only the refresh token is required; `/auth/me` is retried
+   after a silent refresh and the app stays signed in.
+5. **No rotation race.** Open two tabs, let the access token expire, then trigger requests in both: only one
+   refresh call is made (one rotation), and both tabs adopt the new tokens (cross-tab `localStorage` lock).
+6. **Password change.** `/account/password` → change the password: every session is revoked, the app returns
+   to `/login` with a confirmation, and the old password no longer works.
+
 ## 6. Authentication during manual testing
 
-1. Register (or log in) to get tokens:
+1. Register (or log in) to get tokens. Registration always assigns `PATIENT`:
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"username":"alice","email":"alice@example.com","password":"Password@123","fullName":"Alice","role":"PATIENT"}'
+  -d '{"username":"alice","email":"alice@example.com","password":"Password@123","fullName":"Alice"}'
 ```
 2. Use the returned `accessToken` for subsequent calls:
 ```bash
 curl -s http://localhost:8080/api/v1/auth/me \
   -H "Authorization: Bearer <accessToken>"
 ```
-3. **Refresh** (rotates both tokens):
+3. **Refresh** (rotates both tokens; the presented refresh token is revoked):
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/auth/refresh \
   -H "Content-Type: application/json" \
   -d '{"refreshToken":"<refreshToken>"}'
 ```
-4. **Logout** revokes the user's refresh tokens:
+   Replaying the old refresh token outside `AUTH_REFRESH_REUSE_GRACE` (default `10s`) revokes the whole
+   session family — the rotated token stops working too. That is expected anti-theft behaviour.
+4. **Logout** revokes the current session and the presented access token:
 ```bash
 curl -s -X POST http://localhost:8080/api/v1/auth/logout \
   -H "Authorization: Bearer <accessToken>"
+# /me with the same token now returns 401 - in every service, through the shared Redis registry
+curl -s -i http://localhost:8080/api/v1/auth/me -H "Authorization: Bearer <accessToken>"
+```
+5. **Change password** (revokes every session of the user):
+```bash
+curl -s -X POST http://localhost:8080/api/v1/auth/change-password \
+  -H "Authorization: Bearer <accessToken>" -H "Content-Type: application/json" \
+  -d '{"currentPassword":"Password@123","newPassword":"NewPassword@456"}'
+```
+6. **Password reset** (no mail delivery; enable `AUTH_PASSWORD_RESET_EXPOSE_TOKEN=true` locally so the
+   token is returned in the response):
+```bash
+curl -s -X POST http://localhost:8080/api/v1/auth/password-reset/request \
+  -H "Content-Type: application/json" -d '{"email":"alice@example.com"}'
+curl -s -X POST http://localhost:8080/api/v1/auth/password-reset/confirm \
+  -H "Content-Type: application/json" -d '{"token":"<token>","newPassword":"NewPassword@456"}'
+```
+7. **Login lockout**: five wrong passwords lock the account for 15 minutes
+   (`SECURITY_LOGIN_MAX_FAILED_ATTEMPTS`, `SECURITY_LOGIN_LOCKOUT_DURATION`); the next attempt returns
+   **429** with `Retry-After`, even with the correct password, until the window expires.
+
+### 6.1 Account lifecycle (ADMIN)
+
+```bash
+# list / inspect accounts
+curl -s http://localhost:8080/api/v1/auth/users -H "Authorization: Bearer <adminToken>"
+# suspend: previously issued tokens stop working immediately
+curl -s -X PATCH http://localhost:8080/api/v1/auth/users/<userId>/status \
+  -H "Authorization: Bearer <adminToken>" -H "Content-Type: application/json" \
+  -d '{"status":"SUSPENDED","reason":"security review"}'
+# re-activate
+curl -s -X PATCH http://localhost:8080/api/v1/auth/users/<userId>/status \
+  -H "Authorization: Bearer <adminToken>" -H "Content-Type: application/json" \
+  -d '{"status":"ACTIVE"}'
+# change roles (only UserRole names; revokes all sessions)
+curl -s -X PATCH http://localhost:8080/api/v1/auth/users/<userId>/roles \
+  -H "Authorization: Bearer <adminToken>" -H "Content-Type: application/json" \
+  -d '{"roles":["NURSE"]}'
 ```
 
-> All responses use the `ApiResponse` envelope: `{ success, message, data, errors?, timestamp }`. 401 responses are empty-bodied.
+Administrators cannot suspend/deactivate themselves or remove their own `ADMIN` role (400).
+
+> All responses use the `ApiResponse` envelope: `{ success, message, data, errors?, timestamp }`. Authentication errors are generic 401s; 403 is used for authorization failures and for non-active accounts (only after a correct password).
 
 ## 7. Test role-based access
 
@@ -234,16 +330,17 @@ Roles enforced by each service (see service READMEs for the full matrix):
 
 | Role | Typical access |
 |---|---|
-| `ADMIN` | Everything (delete patient, write medical records, all analytics) |
-| `DOCTOR` | Own profile/records; medical-record write; analytics |
-| `PATIENT` | Own profile, own appointments/records/billing (scoped) |
-| `BILLING_STAFF` | Invoice/payment write |
-| `NURSE`, `SUPPORT` | Read-mostly, some create |
+| `ADMIN` | Everything (delete patient, write/reassign medical records, invoice/payment write, all analytics) |
+| `DOCTOR` | Own profile/schedule, own records; patient/doctor profile create; analytics |
+| `PATIENT` | Own profile create, own appointments/records/billing (scoped); cannot update/delete own patient profile |
+| `NURSE` | Broad appointment/read access, invoice reads; no medical-record access, no profile writes |
+| `BILLING_STAFF` | Invoice/payment write, broad appointment/invoice reads |
+| `SUPPORT` | Broad appointment/invoice reads only; no profile writes, no medical-record access |
 
-Create users via `/api/v1/auth/register` (always granted the `PATIENT` role — self-registration must not assign admin/doctor roles). For role-based testing, use the seeded accounts (`admin`/`doctor`/`patient`) or the `dev,seed` seeder. Then verify:
+Create users via `/api/v1/auth/register` (always granted the `PATIENT` role — self-registration must not assign admin/doctor roles). For role-based testing, use the seeded accounts (`admin`/`doctor`/`patient`/`nurse`/`billing`/`support`, passwords `Admin@123`/`Doctor@123`/`Patient@123`/`Nurse@123`/`Billing@123`/`Support@123`) or the `dev,seed` seeder. Then verify:
 
 ```bash
-# PATIENT trying to PUT their own patient profile -> 403 (PUT excludes PATIENT)
+# PATIENT trying to PUT their own patient profile -> 403 (PUT is ADMIN/DOCTOR only)
 curl -s -i -X PUT http://localhost:8080/api/v1/patients/<patientId> \
   -H "Authorization: Bearer <patientToken>" -H "Content-Type: application/json" \
   -d '{"firstName":"A","lastName":"B","email":"a@b.c","phone":"123"}'
@@ -251,7 +348,18 @@ curl -s -i -X PUT http://localhost:8080/api/v1/patients/<patientId> \
 # Non-ADMIN deleting a patient -> 403
 curl -s -i -X DELETE http://localhost:8080/api/v1/patients/<patientId> \
   -H "Authorization: Bearer <doctorToken>"
+
+# NURSE reading a medical record -> 403 (PHI is ADMIN/DOCTOR/PATIENT only)
+curl -s -i http://localhost:8080/api/v1/medical-records/<recordId> \
+  -H "Authorization: Bearer <nurseToken>"
+
+# SUPPORT creating a patient profile -> 403 (staff roles cannot write profiles)
+curl -s -i -X POST http://localhost:8080/api/v1/patients \
+  -H "Authorization: Bearer <supportToken>" -H "Content-Type: application/json" \
+  -d '{"firstName":"A","lastName":"B","email":"a@b.c","phone":"123"}'
 ```
+
+Unknown roles (e.g. a token carrying the obsolete `ROLE_STAFF`) are treated as unauthorized wherever a role allow-list applies.
 
 ## 8. Test Kafka flows
 
@@ -304,7 +412,14 @@ curl -s http://localhost:8080/api/v1/analytics/patients -H "Authorization: Beare
 | DLQ accumulating (`dlq.<topic>`) | Deserialization/processing errors | Inspect DLQ topic; check `spring.json.trusted.packages` |
 | `lb://` route failures | YAML routes target `localhost` but services run in Docker | Point services at the host IP (or use `localhost` from the host with services running locally) |
 | Doctor search/list 500s with `function lower(bytea) does not exist` | Hibernate binds a `null` JPQL `String` parameter as PostgreSQL `bytea`; `lower(?)` then has no matching overload | Was fixed by casting the param: `lower(cast(:department as string))` in `DoctorRepository.search`. Keep the cast if the query changes. |
-| Auth refresh 500s with `duplicate key value violates unique constraint "refresh_tokens_token_key"` | `JwtProvider.generateRefreshToken` produced a JWT whose `iat`/`exp` claims are second-resolution; two tokens minted within the same second were byte-identical | Fixed by adding a `jti` claim (`Jwts.builder().id(UUID.randomUUID())`) so every refresh token is unique. |
+| Auth refresh 500s with `duplicate key value violates unique constraint "refresh_tokens_token_key"` | `JwtProvider.generateRefreshToken` produced a JWT whose `iat`/`exp` claims are second-resolution; two tokens minted within the same second were byte-identical | Fixed by adding a `jti` claim (`Jwts.builder().id(UUID.randomUUID())`) so every refresh token is unique. Access tokens carry a `jti` too (2026-11-12). |
+| `/api/v1/auth/me` returns 200 with a token captured before logout | Should not happen: logout revokes the `sid` **and** blacklists the presented `jti` in the shared Redis registry, and every service checks it | Verify Redis is shared (`REDIS_HOST`/`REDIS_PORT` identical for all services) and `SECURITY_REVOCATION_ENABLED=true`. With `=false` the no-op registry is installed (tests/local only) and revocation silently does nothing. |
+| Protected requests return **503** across all services | Revocation store unreachable while `SECURITY_REVOCATION_FAIL_OPEN=false` (default, fail-closed) | `docker compose ps redis`; `docker exec -it $(docker compose ps -q redis) redis-cli ping`; check `REDIS_HOST`/`REDIS_PORT` and service logs for `RevocationUnavailableException`. Never "fix" this by enabling fail-open in production. |
+| `POST /api/v1/auth/refresh` returns 401 and the next refresh also fails | The presented token was reused outside `AUTH_REFRESH_REUSE_GRACE` (default `10s`), so reuse detection revoked the whole session family - including the rotated token | Expected anti-theft behaviour. Sign in again. Do not retry a rotated refresh token from a second tab/script; the frontend single-flight lock and cross-tab lock prevent this. |
+| Login returns **429** with `Retry-After` even with the correct password | Temporary lockout after `SECURITY_LOGIN_MAX_FAILED_ATTEMPTS` (default 5) failures, for `SECURITY_LOGIN_LOCKOUT_DURATION` (default 15 min) | Wait for the window or reset `users.failed_login_attempts` / `users.locked_until` in `mediflow_auth_db`. The lock is always time-based, so an attacker cannot permanently lock an account. |
+| Login returns 403 "account is SUSPENDED/INACTIVE" | Account status is not `ACTIVE`; the status-specific message is returned only after a correct password | `GET /api/v1/auth/users/{id}` (ADMIN) or re-activate: `PATCH /users/{id}/status {"status":"ACTIVE"}`. |
+| Services log `NoClassDefFoundError: com/mediflow/common/security/...` after a partial build | Stale `common-library/target/classes` / `~/.m2` artifact without the new security package | Run the reactor with `-am` (`mvn -pl backend/<service> -am test`) or `mvn clean test`; do not rely on `mvn -pl <service> test` alone. |
+| Admin status/role change returns 400 | `LOCKED`/`DELETED` are not assignable, administrators cannot suspend themselves, and only `UserRole` names are accepted | Use `ACTIVE`, `INACTIVE`, `SUSPENDED` or `PENDING_VERIFICATION`; roles from `PATIENT, DOCTOR, NURSE, ADMIN, BILLING_STAFF, SUPPORT`. |
 | `POST /api/v1/auth/register` with `role=ADMIN` grants admin privileges | Registration accepted a client-supplied `role` and looked it up against seeded roles, so unauthenticated callers could self-register as ADMIN/DOCTOR | Fixed 2026-08-18: registration always assigns `PATIENT`; the `role` field is ignored. Do not reintroduce role selection on the public register endpoint. |
 | Appointment list/search 500s with `could not determine data type of parameter $N` | The `search` JPQL (`:status is null or a.status = :status`, ...) leaves PostgreSQL unable to infer the types of null-bound parameters | Fixed 2026-08-19 by casting each optional param in `AppointmentRepository.search`: `cast(:status as string)`, `cast(:patientId as string)`, `cast(:doctorId as string)`, `cast(:fromTime as timestamp)`, `cast(:toTime as timestamp)`. Keep the casts if the query changes. |
 
@@ -349,10 +464,18 @@ mvn -B -ntp verify
 
 - Most services test on H2 (PostgreSQL mode, Flyway disabled) — no external infra.
 - `analytics-service`, `medical-record-service`, and `notification-service` integration tests use **Testcontainers PostgreSQL 16** and require Docker (they auto-skip if Docker is unavailable). The JVM default timezone is set to UTC for these.
+- Token-revocation suites use **Testcontainers Redis** (`redis:7.2-alpine`): `AuthRevocationRedisIntegrationTest` (auth-service) and `CrossServiceTokenRevocationIntegrationTest` (patient-service, proving a revocation written by auth-service is enforced by another service). `RefreshConcurrencyIntegrationTest` uses the H2 DB row lock. All of them auto-skip without Docker (`disabledWithoutDocker = true`).
+- Every service's test `application.yml` sets `security.revocation.enabled: false` so ordinary RBAC tests do not need Redis; the suites above override it with `@SpringBootTest(properties = "security.revocation.enabled=true")` against the Testcontainers instance. Do not mock the registry in those suites - that would remove the behaviour under test.
+- Testcontainers start-up is slow (often 1-3 min on Windows/Docker Desktop), so a reactor run can look idle for a long time before the first `Tests run:` line appears.
 
-Run a single service's tests:
+Run a single service's tests (add `-am` so `common-library` is built from source):
 ```bash
-mvn -pl backend/patient-service test
+mvn -pl backend/patient-service -am test
+```
+
+Run one test class (quote the `-D` argument in PowerShell):
+```bash
+mvn -pl backend/auth-service -am test "-Dtest=AuthControllerIntegrationTest" "-Dsurefire.failIfNoSpecifiedTests=false"
 ```
 
 ## 13. Build/package everything
@@ -380,7 +503,8 @@ docker build -t mediflow/api-gateway backend/api-gateway
 # medical-record-service, billing-service, notification-service, analytics-service
 ```
 
-Run a built image (JWT_SECRET and DB_PASSWORD are mandatory):
+Run a built image (JWT_SECRET and DB_PASSWORD are mandatory; Redis must be reachable or
+protected requests fail closed with 503):
 
 ```bash
 docker run --rm -p 8081:8081 \
@@ -388,8 +512,15 @@ docker run --rm -p 8081:8081 \
   -e DB_URL=jdbc:postgresql://host.docker.internal:5432/mediflow_auth_db \
   -e DB_USERNAME=postgres \
   -e DB_PASSWORD=change-me \
+  -e REDIS_HOST=host.docker.internal \
+  -e REDIS_PORT=6379 \
   mediflow/auth-service
 ```
+
+Every runnable service needs the same `REDIS_HOST`/`REDIS_PORT` (and
+`SECURITY_REVOCATION_ENABLED=true`, `SECURITY_REVOCATION_FAIL_OPEN=false`), plus
+`AUTH_SERVICE_URL` for patient/doctor profile validation. Inside a Docker network use the
+service/container name (e.g. `redis`) instead of `host.docker.internal`.
 
 Frontend image:
 ```bash

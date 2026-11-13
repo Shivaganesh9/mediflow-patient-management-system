@@ -1,7 +1,9 @@
 package com.mediflow.doctor.service;
 
+import com.mediflow.common.exception.ConflictException;
 import com.mediflow.doctor.dto.CreateDoctorRequest;
 import com.mediflow.doctor.entity.Doctor;
+import com.mediflow.doctor.identity.IdentityVerifier;
 import com.mediflow.doctor.mapper.DoctorMapper;
 import com.mediflow.doctor.repository.DoctorRepository;
 import com.mediflow.doctor.security.CurrentUser;
@@ -20,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -35,6 +38,9 @@ class DoctorServiceTest {
 
     @Mock
     private CurrentUser currentUser;
+
+    @Mock
+    private IdentityVerifier identityVerifier;
 
     @InjectMocks
     private DoctorService doctorService;
@@ -68,6 +74,76 @@ class DoctorServiceTest {
         Doctor result = doctorService.createDoctor(request);
 
         assertEquals(targetUserId, result.getDoctorId());
+    }
+
+    @Test
+    void createDoctorByAdminVerifiesReferencedIdentityAgainstAuthService() {
+        UUID targetUserId = UUID.randomUUID();
+        when(doctorRepository.existsByEmail(any())).thenReturn(false);
+        when(currentUser.hasRole("DOCTOR")).thenReturn(false);
+        when(currentUser.currentUsername()).thenReturn("admin");
+        when(doctorRepository.existsByDoctorId(targetUserId)).thenReturn(false);
+        when(doctorMapper.toEntity(any())).thenAnswer(invocation -> new Doctor());
+        when(doctorRepository.save(any(Doctor.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CreateDoctorRequest request = new CreateDoctorRequest();
+        request.setEmail("jane.doe@example.com");
+        request.setUserId(targetUserId);
+
+        doctorService.createDoctor(request);
+
+        verify(identityVerifier).verifyIdentity(targetUserId, "DOCTOR");
+    }
+
+    @Test
+    void createDoctorByDoctorSkipsRemoteIdentityVerification() {
+        UUID uid = UUID.randomUUID();
+        when(doctorRepository.existsByEmail(any())).thenReturn(false);
+        when(currentUser.hasRole("DOCTOR")).thenReturn(true);
+        when(currentUser.requireCurrentUserId()).thenReturn(uid);
+        when(currentUser.currentUsername()).thenReturn("dr-jane");
+        when(doctorRepository.existsByDoctorId(uid)).thenReturn(false);
+        when(doctorMapper.toEntity(any())).thenAnswer(invocation -> new Doctor());
+        when(doctorRepository.save(any(Doctor.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CreateDoctorRequest request = new CreateDoctorRequest();
+        request.setEmail("jane.doe@example.com");
+
+        doctorService.createDoctor(request);
+
+        verify(identityVerifier, never()).verifyIdentity(any(), any());
+    }
+
+    @Test
+    void createDoctorRejectsIdentityThatIsNotActive() {
+        UUID targetUserId = UUID.randomUUID();
+        when(doctorRepository.existsByEmail(any())).thenReturn(false);
+        when(currentUser.hasRole("DOCTOR")).thenReturn(false);
+        doThrow(new ConflictException("The referenced user account is not active"))
+                .when(identityVerifier).verifyIdentity(targetUserId, "DOCTOR");
+
+        CreateDoctorRequest request = new CreateDoctorRequest();
+        request.setEmail("jane.doe@example.com");
+        request.setUserId(targetUserId);
+
+        assertThrows(ConflictException.class, () -> doctorService.createDoctor(request));
+        verify(doctorRepository, never()).save(any(Doctor.class));
+    }
+
+    @Test
+    void createDoctorRejectsIdentityWithWrongRole() {
+        UUID targetUserId = UUID.randomUUID();
+        when(doctorRepository.existsByEmail(any())).thenReturn(false);
+        when(currentUser.hasRole("DOCTOR")).thenReturn(false);
+        doThrow(new IllegalArgumentException("userId does not reference a DOCTOR identity"))
+                .when(identityVerifier).verifyIdentity(targetUserId, "DOCTOR");
+
+        CreateDoctorRequest request = new CreateDoctorRequest();
+        request.setEmail("jane.doe@example.com");
+        request.setUserId(targetUserId);
+
+        assertThrows(IllegalArgumentException.class, () -> doctorService.createDoctor(request));
+        verify(doctorRepository, never()).save(any(Doctor.class));
     }
 
     @Test

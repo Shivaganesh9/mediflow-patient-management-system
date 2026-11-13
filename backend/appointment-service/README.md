@@ -1,6 +1,6 @@
 # Appointment Service
 
-Scheduling, rescheduling, and cancellation of patient–doctor appointments.
+Scheduling, rescheduling, and cancellation of patientï¿½doctor appointments.
 
 ## Purpose
 Owns the appointment lifecycle and publishes appointment events to Kafka for downstream consumers (notification, analytics).
@@ -25,9 +25,10 @@ Owns the appointment lifecycle and publishes appointment events to Kafka for dow
 
 ## Security / roles
 All endpoints require a valid JWT. `AccessControlService` enforces ownership + role rules at the service layer:
-- **PATIENT** — create/list/get/update/cancel scoped to their own `patientId` (JWT `uid`); `patientId` cannot be forced to another patient.
-- **DOCTOR** — scoped to their own `doctorId`; cannot force another doctor's identity.
-- **Staff (ADMIN, NURSE, BILLING_STAFF, SUPPORT)** — broad access to any patient/doctor appointment.
+- **PATIENT** ï¿½ create/list/get/update/cancel scoped to their own `patientId` (JWT `uid`); `patientId` cannot be forced to another patient.
+- **DOCTOR** ï¿½ scoped to their own `doctorId`; cannot force another doctor's identity.
+- **Staff (ADMIN, NURSE, BILLING_STAFF, SUPPORT)** ï¿½ broad access to any patient/doctor appointment.
+- Any other/unknown role (e.g. the obsolete `STAFF`) is denied with 403; missing/invalid tokens receive 401.
 
 ## Conflict detection
 Overlap query (`AppointmentRepository`) checks `start < :end && end > :start` for the given `patientId` **or** `doctorId`, ignoring `CANCELLED`/`COMPLETED`/`NO_SHOW` rows. Used on create and on reschedule (excluding the current appointment).
@@ -42,9 +43,9 @@ Overlap query (`AppointmentRepository`) checks `start < :end && end > :start` fo
 
 ## Database / migrations
 - PostgreSQL, `ddl-auto: validate`, Flyway `classpath:db/migration`.
-- `V1__init_appointment_schema.sql` — `appointments` + indexes.
-- `V2__add_appointment_version.sql` — `version`.
-- `V3__add_appointment_type.sql` — `appointment_type`.
+- `V1__init_appointment_schema.sql` ï¿½ `appointments` + indexes.
+- `V2__add_appointment_version.sql` ï¿½ `version`.
+- `V3__add_appointment_type.sql` ï¿½ `appointment_type`.
 
 ## Run locally
 ```bash
@@ -56,7 +57,7 @@ Kafka must be reachable if producers are enabled (see `docs/runbook.md`).
 Dev-only seeder (`@Profile("seed")`, `AppointmentDevDataSeeder`) creates four appointments
 referencing the seeded patient/doctor IDs. Enable with
 `mvn -pl backend/appointment-service -am spring-boot:run -Dspring-boot.run.profiles=dev,seed`.
-Idempotent (skips existing appointment IDs). See `docs/runbook.md` §2.1.
+Idempotent (skips existing appointment IDs). See `docs/runbook.md` ï¿½2.1.
 
 ## Test
 ```bash
@@ -79,4 +80,4 @@ Unit tests (15) + MockMvc integration/security tests with real test JWTs (PATIEN
 `common-library`, Spring Web/Data JPA/Security/Validation/Actuator, PostgreSQL, Flyway, spring-kafka, jjwt, springdoc, MapStruct.
 
 ## Limitations
-- No endpoints transition statuses to `CONFIRMED`, `IN_PROGRESS`, `COMPLETED`, or `NO_SHOW` — the lifecycle is limited to `SCHEDULED` ? `CANCELLED` via the API.
+- No endpoints transition statuses to `CONFIRMED`, `IN_PROGRESS`, `COMPLETED`, or `NO_SHOW` ï¿½ the lifecycle is limited to `SCHEDULED` ? `CANCELLED` via the API.

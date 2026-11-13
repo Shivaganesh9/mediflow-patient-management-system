@@ -39,7 +39,7 @@ class AuthDevDataSeederTest {
     private AuthDevDataSeeder seeder;
 
     @Test
-    void seedCreatesAdminDoctorPatientUsers() {
+    void seedCreatesOneUserForEveryRole() {
         when(roleRepository.findByName(anyString()))
                 .thenAnswer(inv -> Optional.of(Role.builder().name(inv.getArgument(0)).build()));
         when(passwordEncoder.encode(anyString())).thenReturn("encoded");
@@ -48,7 +48,7 @@ class AuthDevDataSeederTest {
         seeder.seed();
 
         ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository, times(3)).save(captor.capture());
+        verify(userRepository, times(6)).save(captor.capture());
 
         Set<java.util.UUID> ids = captor.getAllValues().stream()
                 .map(User::getId)
@@ -56,6 +56,14 @@ class AuthDevDataSeederTest {
         assertTrue(ids.contains(DevSeedData.ADMIN_USER_ID));
         assertTrue(ids.contains(DevSeedData.DOCTOR_USER_ID));
         assertTrue(ids.contains(DevSeedData.PATIENT_USER_ID));
+        assertTrue(ids.contains(DevSeedData.NURSE_USER_ID));
+        assertTrue(ids.contains(DevSeedData.BILLING_STAFF_USER_ID));
+        assertTrue(ids.contains(DevSeedData.SUPPORT_USER_ID));
+
+        Set<String> roles = captor.getAllValues().stream()
+                .map(user -> user.getRoles().iterator().next().getName())
+                .collect(java.util.stream.Collectors.toSet());
+        assertEquals(Set.of("ADMIN", "DOCTOR", "PATIENT", "NURSE", "BILLING_STAFF", "SUPPORT"), roles);
 
         User admin = captor.getAllValues().stream()
                 .filter(u -> u.getId().equals(DevSeedData.ADMIN_USER_ID))
@@ -65,7 +73,15 @@ class AuthDevDataSeederTest {
         assertEquals(DevSeedData.ADMIN_EMAIL, admin.getEmail());
         assertEquals(AccountStatus.ACTIVE, admin.getStatus());
         assertEquals("ADMIN", admin.getRoles().iterator().next().getName());
-        verify(passwordEncoder, times(3)).encode(anyString());
+
+        User nurse = captor.getAllValues().stream()
+                .filter(u -> u.getId().equals(DevSeedData.NURSE_USER_ID))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(DevSeedData.NURSE_USERNAME, nurse.getUsername());
+        assertEquals("NURSE", nurse.getRoles().iterator().next().getName());
+
+        verify(passwordEncoder, times(6)).encode(anyString());
     }
 
     @Test

@@ -26,20 +26,20 @@ Consumes appointment, billing, and medical-record events to build analytical fac
 All accept optional `from`/`to` (`yyyy-MM-dd`); default range = current month; `from > to` ? 400.
 
 ## Security / roles
-`hasAnyRole("ADMIN", "DOCTOR")` for all `/api/v1/analytics/**` in `SecurityConfig`.
+`hasAnyRole("ADMIN", "DOCTOR")` for all `/api/v1/analytics/**` in `SecurityConfig`. Every other role â€” `PATIENT`, `NURSE`, `BILLING_STAFF`, `SUPPORT` and any unknown/obsolete role â€” receives 403; missing/invalid tokens receive 401.
 
 ## Kafka (consumer)
 - Topics: `appointment.created.v1`, `appointment.updated.v1`, `appointment.cancelled.v1`, `invoice.generated.v1`, `invoice.cancelled.v1`, `payment.confirmed.v1`, `payment.refunded.v1`, `medical-record.created.v1` (deliberately **not** `medical-record.updated.v1`).
 - Group id: `analytics-service`; `auto-offset-reset: earliest`.
 - Deserializes producer payload classes (`AppointmentEvent`, `BillingEvent`, `MedicalRecordEvent`) via JsonDeserializer type headers; `spring.json.trusted.packages: com.mediflow.*`.
-- **Idempotency:** `processed_events(event_id PK)` ledger — pre-check `existsById` + swallow `DataIntegrityViolationException`.
+- **Idempotency:** `processed_events(event_id PK)` ledger ï¿½ pre-check `existsById` + swallow `DataIntegrityViolationException`.
 - **Error handling:** `analyticsErrorHandler` (`DefaultErrorHandler` + `DeadLetterPublishingRecoverer`, `FixedBackOff(1000ms, 3)`) to `dlq.<topic>`.
 - Unknown billing event types are logged and ignored.
 
 ## Database / migrations
 - PostgreSQL, `ddl-auto: validate`, Flyway `locations: classpath:db/migration/analytics` (scoped to avoid dependency-jar migration collisions).
-- `V1__init_analytics_schema.sql` — `metric_snapshots` (legacy).
-- `V2__enhance_analytics_schema.sql` — drops `metric_snapshots`; creates `processed_events`, `appointment_facts`, `invoice_facts`, `payment_facts`, `medical_record_facts`.
+- `V1__init_analytics_schema.sql` ï¿½ `metric_snapshots` (legacy).
+- `V2__enhance_analytics_schema.sql` ï¿½ drops `metric_snapshots`; creates `processed_events`, `appointment_facts`, `invoice_facts`, `payment_facts`, `medical_record_facts`.
 - Aggregations use PostgreSQL-native SQL (`date_trunc`, etc.), which is why tests require a real PostgreSQL.
 
 ## Run locally
@@ -52,13 +52,13 @@ Requires Kafka plus the appointment/billing/medical-record jars on the classpath
 Dev-only seeder (`@Profile("seed")`, `AnalyticsDevDataSeeder`) populates the fact tables and the
 `processed_events` ledger directly (mirroring the Kafka consumer's output). Enable with
 `mvn -pl backend/analytics-service -am spring-boot:run -Dspring-boot.run.profiles=dev,seed`.
-Idempotent (skips events already in the ledger). See `docs/runbook.md` §2.1.
+Idempotent (skips events already in the ledger). See `docs/runbook.md` ï¿½2.1.
 
 ## Test
 ```bash
 mvn -pl backend/analytics-service test
 ```
-Unit tests (service 17, consumer 5, mapper 11) + MockMvc integration/security tests (7 + 7) + repository integration tests (5) on **Testcontainers PostgreSQL 16** with Flyway enabled (requires Docker; JVM TZ forced to UTC).
+Unit tests (service 17, consumer 5, mapper 11) + MockMvc integration/security tests (8 + 7) + repository integration tests (5) on **Testcontainers PostgreSQL 16** with Flyway enabled (requires Docker; JVM TZ forced to UTC).
 
 ## Environment variables
 | Variable | Default | Notes |

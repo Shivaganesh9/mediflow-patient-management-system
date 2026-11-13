@@ -17,7 +17,7 @@ export function PatientsPage() {
   const [page, setPage] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
 
-  const canCreate = hasRole('ADMIN', 'PATIENT', 'DOCTOR', 'BILLING_STAFF', 'SUPPORT', 'NURSE');
+  const canCreate = hasRole('ADMIN', 'PATIENT', 'DOCTOR');
   const showUserIdField = !hasRole('PATIENT');
 
   const list = useAsync(() => patientsApi.list({ search: search || undefined, page, size: 20 }), [search, page]);

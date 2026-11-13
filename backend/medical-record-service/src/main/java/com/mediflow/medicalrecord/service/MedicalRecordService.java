@@ -71,6 +71,15 @@ public class MedicalRecordService {
                 .orElseThrow(() -> new ResourceNotFoundException("Medical record not found with id: " + recordId));
         accessControl.assertCanWrite(medicalRecord);
 
+        // Moving a record to another patient would let a doctor detach it from the
+        // patient whose care it documents (and attach it to another patient). Only
+        // administrators may correct a mis-assigned patient.
+        if (request.getPatientId() != null
+                && !request.getPatientId().equals(medicalRecord.getPatientId())
+                && !accessControl.isAdmin()) {
+            throw new AccessDeniedException("Only administrators can reassign a medical record to another patient");
+        }
+
         if (request.getPatientId() != null) {
             medicalRecord.setPatientId(request.getPatientId());
         }

@@ -78,6 +78,26 @@ class AccessControlServiceTest {
     }
 
     @Test
+    void clinicalStaffCanReadAnyInvoice() {
+        for (String role : List.of("DOCTOR", "NURSE", "SUPPORT")) {
+            authenticate(role.toLowerCase(), UUID.randomUUID(), List.of(role));
+
+            assertTrue(accessControl.canRead(invoiceFor(UUID.randomUUID())));
+            assertTrue(accessControl.hasStaffAccess());
+        }
+    }
+
+    @Test
+    void unknownRoleCannotReadOrScopeInvoices() {
+        authenticate("legacy-staff", UUID.randomUUID(), List.of("STAFF"));
+
+        assertFalse(accessControl.canRead(invoiceFor(UUID.randomUUID())));
+        assertFalse(accessControl.hasStaffAccess());
+        assertThrows(AccessDeniedException.class,
+                () -> accessControl.scopedPatientId(UUID.randomUUID()));
+    }
+
+    @Test
     void currentUserIdIsEmptyWithoutAuthentication() {
         assertNull(accessControl.currentUserId());
         assertNull(accessControl.currentUsername());

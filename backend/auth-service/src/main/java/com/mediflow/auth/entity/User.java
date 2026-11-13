@@ -12,6 +12,7 @@ import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import lombok.ToString;
 
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -50,6 +51,21 @@ public class User extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private AccountStatus status;
 
+    /** Consecutive failed logins since the last success; reset on successful authentication. */
+    @Column(name = "failed_login_attempts", nullable = false)
+    private int failedLoginAttempts;
+
+    /** Temporary lockout expiry. Always time-based, never permanent (avoids lockout DoS). */
+    @Column(name = "locked_until")
+    private Instant lockedUntil;
+
+    @Column(name = "last_failed_login_at")
+    private Instant lastFailedLoginAt;
+
+    /** Set whenever the password changes; used for audit and password-age policies. */
+    @Column(name = "password_changed_at")
+    private Instant passwordChangedAt;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
             name = "user_roles",
@@ -58,5 +74,6 @@ public class User extends BaseEntity {
     )
     @ToString.Exclude
     @EqualsAndHashCode.Exclude
+    @Builder.Default
     private Set<Role> roles = new HashSet<>();
 }

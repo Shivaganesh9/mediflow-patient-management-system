@@ -4,6 +4,7 @@ import com.mediflow.common.exception.ResourceNotFoundException;
 import com.mediflow.doctor.dto.CreateDoctorRequest;
 import com.mediflow.doctor.dto.DoctorResponse;
 import com.mediflow.doctor.entity.Doctor;
+import com.mediflow.doctor.identity.IdentityVerifier;
 import com.mediflow.doctor.mapper.DoctorMapper;
 import com.mediflow.doctor.repository.DoctorRepository;
 import com.mediflow.doctor.security.CurrentUser;
@@ -25,6 +26,7 @@ public class DoctorService {
     private final DoctorRepository doctorRepository;
     private final DoctorMapper doctorMapper;
     private final CurrentUser currentUser;
+    private final IdentityVerifier identityVerifier;
 
     @Transactional
     public Doctor createDoctor(CreateDoctorRequest request) {
@@ -70,8 +72,10 @@ public class DoctorService {
 
     /**
      * Resolves the Auth user identity to be assigned as the doctor business id.
-     * A doctor may only create their own profile; other roles must explicitly
-     * identify the target Auth user rather than using their own uid.
+     * <p>A doctor may only create their own profile: the {@code uid} claim of their signed
+     * token already proves both the identity and the {@code DOCTOR} role, so no remote call
+     * is needed. Every other role must explicitly identify the target Auth user, and that
+     * reference is verified against auth-service before the profile is created.</p>
      */
     private UUID resolveDoctorIdentity(UUID requestedUserId) {
         if (currentUser.hasRole("DOCTOR")) {
@@ -84,6 +88,7 @@ public class DoctorService {
         if (requestedUserId == null) {
             throw new IllegalArgumentException("userId is required to associate the doctor profile with an Auth user");
         }
+        identityVerifier.verifyIdentity(requestedUserId, "DOCTOR");
         return requestedUserId;
     }
 

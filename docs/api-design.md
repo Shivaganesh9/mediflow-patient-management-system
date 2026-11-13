@@ -1,6 +1,6 @@
 # MediFlow REST API
 
-*Status: reflects the implemented codebase (2026-08-14).*
+*Status: reflects the implemented codebase (2026-11-13, Milestone 3).*
 
 ## 1. Conventions
 
@@ -8,47 +8,69 @@
 - Response envelope (`common-library` `ApiResponse`): `{ success, message, data, errors, timestamp }`; `errors` omitted when null.
 - Pagination via Spring Data `Pageable`: params `page`, `size`, `sort`; default size 20 everywhere (patient/doctor sort `lastName`, appointment sort `startTime`, medical-record sort `encounterDate`, invoice sort `issuedAt`).
 - All responses wrapped in `ApiResponse.success(...)`; create endpoints return HTTP 201.
-- Error mapping (`GlobalExceptionHandler`): `ResourceNotFoundException` → 404; `ConflictException` → 409; `IllegalArgumentException` → 400; `DateTimeParseException` → 400; `MethodArgumentNotValidException` / `ConstraintViolationException` → 400; `AccessDeniedException` → 403.
+- Error mapping (`GlobalExceptionHandler`): `ResourceNotFoundException` → 404; `ConflictException` → 409; `IllegalArgumentException` → 400; `DateTimeParseException` → 400; `MethodArgumentNotValidException` / `ConstraintViolationException` → 400; `AuthenticationException` / `AuthenticationFailedException` → 401 (generic message); `InactiveAccountException` → 403 (non-active account, only after credentials verified); `TooManyRequestsException` → 429 + `Retry-After`; `AccessDeniedException` → 403; `DataIntegrityViolationException` → 409; `ServiceUnavailableException` (downstream dependency, e.g. auth-service unreachable) → 503; `RevocationUnavailableException` (shared revocation store unreachable, fail-closed) → 503.
 
 ## 2. Auth Service (8081) — `/api/v1/auth`
 
 | Method & Path | Auth | Description |
 |---|---|---|
-| POST `/register` | Public | Create user (default role PATIENT), returns access + refresh token. 400 on duplicate username/email |
-| POST `/login` | Public | `usernameOrEmail` + `password`; returns token pair |
-| POST `/refresh` | Public | Rotate refresh token (old revoked) |
-| POST `/logout` | JWT | Delete all refresh tokens for user |
+| POST `/register` | Public | Create user (always role PATIENT), returns an access + refresh token pair (`expiresIn` = access lifetime in seconds). 400 on duplicate username/email or weak password |
+| POST `/login` | Public | `usernameOrEmail` + `password`; returns the token pair. 401 generic on bad credentials; 403 if the account is not `ACTIVE` (only after a correct password); 429 + `Retry-After` while temporarily locked |
+| POST `/refresh` | Public | Rotate the refresh token (old one revoked). Duplicate within `auth.refresh.reuse-grace` = retry; reuse outside it revokes the whole family. 401 for invalid/revoked/reused tokens |
+| POST `/logout` | JWT | Revokes the caller's session (refresh family) and the presented access token; other sessions stay valid |
+| POST `/change-password` | JWT | `currentPassword` + `newPassword`; enforces the policy, clears lockout counters and revokes **all** sessions of the user |
 | GET `/me` | JWT | Current user profile (id, username, email, fullName, phone, status, roles) |
+| POST `/password-reset/request` | Public | `email`; identical response for unknown addresses. Returns `data: { message, token? }` — `token` only when `auth.password-reset.expose-token=true` (dev/test) |
+| POST `/password-reset/confirm` | Public | `token` + `newPassword`; single-use token, revokes all sessions. 401 for invalid/expired/used tokens |
+
+### 2.1 Role-based account administration — `/api/v1/auth/users` (ADMIN only)
+
+| Method & Path | Description |
+|---|---|
+| GET `` | List all accounts (id, username, email, fullName, phone, status, roles) |
+| GET `/{id}` | One account; 404 when unknown |
+| PATCH `/{id}/status` | Body `{ "status": "ACTIVE\|INACTIVE\|SUSPENDED\|PENDING_VERIFICATION", "reason"?: string }`. `LOCKED`/`DELETED` are rejected (400); self-suspension/deactivation → 400. Revokes all sessions of the target |
+| PATCH `/{id}/roles` | Body `{ "roles": ["NURSE", ...] }`; only `UserRole` names are accepted. Revokes all sessions of the target. Removing your own `ADMIN` role → 400 |
+
+Every change is audited in `auth_audit_events` and takes effect immediately in auth-service; downstream services reject the old tokens through the shared revocation registry.
+
+### 2.2 Internal endpoint — identity lookup (not public)
+
+| Method & Path | Auth | Description |
+|---|---|---|
+| GET `/internal/identities/{userId}` | `ADMIN`, `DOCTOR`, `NURSE`, `BILLING_STAFF`, `SUPPORT` | Service-to-service lookup used by patient/doctor services to validate profile `userId` references. Returns `data: { userId, username, status, roles }`; 404 when unknown. |
+
+Outside `/api/v1`, hidden from OpenAPI (`@Hidden`), not routed by the gateway, and never callable with a `PATIENT` token (403). The response intentionally omits email, phone and credentials. Failures propagate to the caller's profile-creation request as 400/403/409/503 (see `docs/security.md` §6).
 
 ## 3. Patient Service (8083) — `/api/v1/patients`
 
 | Method & Path | Auth (role) | Description |
 |---|---|---|
-| POST `` | ADMIN/PATIENT/DOCTOR/STAFF | Create profile; 400 if email exists; 400 if patient business id exists; **409** if a soft-deleted profile holds the id |
-| GET `` | authenticated | Search (q/search params, pageable) |
-| GET `/{patientId}` | authenticated (ownership enforced) | Get profile; 404 if not found or soft-deleted |
-| PUT `/{patientId}` | ADMIN/DOCTOR/STAFF | Update profile; 400 if email taken by another |
+| POST `` | ADMIN/PATIENT/DOCTOR | Create profile; `userId` must reference an existing **ACTIVE PATIENT** identity (verified against auth-service; 400 unknown/wrong role, 409 inactive); 400 if email exists or the identity already has an active profile; **409** if a soft-deleted profile holds the id; PATIENT forced to own uid; NURSE/BILLING_STAFF/SUPPORT → 403 |
+| GET `` | authenticated | Search (q/search params, pageable); PATIENT sees only own profile |
+| GET `/{patientId}` | authenticated (ownership enforced) | Get profile; PATIENT only own (403 otherwise); 404 if not found or soft-deleted |
+| PUT `/{patientId}` | ADMIN/DOCTOR | Update profile; 400 if email taken by another; all staff roles → 403 |
 | DELETE `/{patientId}` | ADMIN | Soft delete |
 
 ## 4. Doctor Service (8085) — `/api/v1/doctors`
 
 | Method & Path | Auth (role) | Description |
 |---|---|---|
-| POST `` | ADMIN/STAFF/DOCTOR | Create profile; 400 on duplicate email or duplicate business id; DOCTOR forced to own uid |
-| GET `` | authenticated | Search by `search`, `department`, pageable |
-| GET `/{doctorId}` | authenticated (ownership enforced) | Get profile; 404 if missing; DOCTOR only own |
-| PUT `/{doctorId}` | ADMIN/STAFF/DOCTOR | Update profile; 400 if email taken by another |
-| POST `/{doctorId}/availability` | ADMIN/STAFF/DOCTOR | Add availability slot |
+| POST `` | ADMIN/DOCTOR | Create profile; `userId` must reference an existing **ACTIVE DOCTOR** identity (verified against auth-service; 400 unknown/wrong role, 409 inactive); 400 on duplicate email or duplicate business id; DOCTOR forced to own uid; staff roles → 403 |
+| GET `` | authenticated | Search by `search`, `department`, pageable (all authenticated roles) |
+| GET `/{doctorId}` | authenticated (ownership enforced) | Get profile; 404 if missing; DOCTOR only own (403 otherwise) |
+| PUT `/{doctorId}` | ADMIN/DOCTOR | Update profile; 400 if email taken by another; DOCTOR only own; staff roles → 403 |
+| POST `/{doctorId}/availability` | ADMIN/DOCTOR | Add availability slot; DOCTOR only own |
 | GET `/{doctorId}/availability` | authenticated | List availability |
-| POST `/{doctorId}/leaves` | ADMIN/STAFF/DOCTOR | Add leave period |
+| POST `/{doctorId}/leaves` | ADMIN/DOCTOR | Add leave period; DOCTOR only own |
 | GET `/{doctorId}/leaves` | authenticated | List leaves |
 
 ## 5. Appointment Service (8084) — `/api/v1/appointments`
 
 | Method & Path | Auth | Description |
 |---|---|---|
-| POST `` | authenticated (scoped) | Create (status SCHEDULED); PATIENT forced to own patientId, DOCTOR to own doctorId, staff any. 400 if `endTime <= startTime` or time overlaps patient/doctor |
-| GET `` | authenticated (scoped) | Filter `status`, `patientId`, `doctorId`, `fromTime`, `toTime`, pageable; PATIENT/DOCTOR forced to own identity |
+| POST `` | authenticated (scoped; staff broad) | Create (status SCHEDULED); PATIENT forced to own patientId, DOCTOR to own doctorId, staff any. 400 if `endTime <= startTime` or time overlaps patient/doctor |
+| GET `` | authenticated (scoped; staff broad) | Filter `status`, `patientId`, `doctorId`, `fromTime`, `toTime`, pageable; PATIENT/DOCTOR forced to own identity; unknown roles → 403 |
 | GET `/{appointmentId}` | authenticated (ownership) | Get by business id; PATIENT/DOCTOR only own (403 otherwise), staff any; 404 if missing |
 | PUT `/{appointmentId}` | authenticated (ownership) | Reschedule; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED; overlap-checked excluding self |
 | PATCH `/{appointmentId}/cancel` | authenticated (ownership) | Cancel; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED |
@@ -59,20 +81,20 @@
 |---|---|---|
 | POST `` | ADMIN/DOCTOR | Create (recordType defaults CONSULTATION); doctor forced to own uid unless admin |
 | GET `` | authenticated (scoped) | Filter `patientId`, `doctorId`, `recordType`, `fromDate`, `toDate`; patient forced to own patientId, doctor forced to own doctorId |
-| GET `/{recordId}` | authenticated (ownership) | Read; patient only own patientId, doctor only own doctorId, admin any |
-| PUT `/{recordId}` | ADMIN/DOCTOR | Update; write requires admin or owning doctor |
+| GET `/{recordId}` | authenticated (ownership) | Read; patient only own patientId, doctor only own doctorId, admin any; NURSE/BILLING_STAFF/SUPPORT and unknown roles → 403 |
+| PUT `/{recordId}` | ADMIN/DOCTOR | Update; write requires admin or owning doctor; non-ADMIN may not change `patientId` (403) |
 
 ## 7. Billing Service (8087) — `/api/v1/invoices` and `/api/v1/payments`
 
 | Method & Path | Auth (role) | Description |
 |---|---|---|
 | POST `/api/v1/invoices` | ADMIN/BILLING_STAFF | Generate invoice (PENDING, computed amounts, `INV-...` number); 400 if total <= 0 |
-| GET `/api/v1/invoices` | authenticated (scoped) | Filter `status`, `patientId`, `appointmentId`, pageable; PATIENT forced to own patientId (403 if foreign filter) |
-| GET `/api/v1/invoices/{invoiceId}` | authenticated (ownership) | Invoice with items + payments; PATIENT only own invoice (403 otherwise), staff any |
+| GET `/api/v1/invoices` | ADMIN/BILLING_STAFF/DOCTOR/NURSE/SUPPORT/PATIENT | Filter `status`, `patientId`, `appointmentId`, pageable; PATIENT forced to own patientId (403 if foreign filter); unknown roles → 403 |
+| GET `/api/v1/invoices/{invoiceId}` | ADMIN/BILLING_STAFF/DOCTOR/NURSE/SUPPORT/PATIENT | Invoice with items + payments; PATIENT only own invoice (403 otherwise), clinical/finance staff any; unknown roles → 403 |
 | PUT `/api/v1/invoices/{invoiceId}` | ADMIN/BILLING_STAFF | Edit items/tax/discount/dueDate/notes; only when PENDING |
 | POST `/api/v1/invoices/{invoiceId}/cancel` | ADMIN/BILLING_STAFF | Cancel; only PENDING with no payments |
 | POST `/api/v1/invoices/{invoiceId}/payments` | ADMIN/BILLING_STAFF | Record payment (≤ remaining balance); recomputes status PAID/PARTIALLY_PAID |
-| GET `/api/v1/invoices/{invoiceId}/payments` | authenticated | List payments |
+| GET `/api/v1/invoices/{invoiceId}/payments` | ADMIN/BILLING_STAFF/DOCTOR/NURSE/SUPPORT/PATIENT | List payments (same read scoping as the invoice) |
 | POST `/api/v1/payments/{paymentId}/refund` | ADMIN/BILLING_STAFF | Refund a COMPLETED payment (→ REFUNDED) |
 
 ## 8. Notification Service (8089) — `/api/v1/notifications`
@@ -105,4 +127,4 @@ Routes (Path predicate → service): `/api/v1/auth/**` → auth (8081), `/api/v1
 
 > Note: the gateway routes come from `application.yml` using direct service URLs (working in local dev). No `lb://` discovery routes exist in this repo (a Eureka registry is not provided).
 
-> Note on the `STAFF` role in the auth column: `STAFF` is referenced by patient/doctor `SecurityConfig` rules (POST/PUT) but is **not** in the `UserRole` enum and no `STAFF` role row is seeded — registration always assigns `PATIENT`, so a `ROLE_STAFF` principal can never exist. These are effectively dead grants; the real staff-like roles are `NURSE`/`BILLING_STAFF`/`SUPPORT` (see `docs/security.md` §4).
+> Authorization conventions: missing/invalid/expired token → **401**; authenticated but role not permitted, or resource owned by someone else → **403**; missing resource → **404**. `AccessDeniedException` is mapped centrally to 403. The obsolete `STAFF` role is not part of `UserRole`; dead `STAFF` grants were removed from patient/doctor matchers and appointment/billing role sets, so `ROLE_STAFF` and any unknown role are denied. The full role matrix is in `docs/security.md` §3.

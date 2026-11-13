@@ -18,7 +18,7 @@ export function DoctorsPage() {
   const [page, setPage] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
 
-  const canCreate = hasRole('ADMIN', 'DOCTOR', 'NURSE', 'BILLING_STAFF', 'SUPPORT');
+  const canCreate = hasRole('ADMIN', 'DOCTOR');
   const showUserIdField = !hasRole('DOCTOR');
 
   const list = useAsync(

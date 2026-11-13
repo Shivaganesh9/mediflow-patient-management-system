@@ -17,3 +17,9 @@ jwt:
   secret: test-secret-key-for-auth-service-with-sufficient-length
   expiration: 900000
   refresh-expiration: 604800000
+
+# Unit/integration tests run without Redis; revocation is covered by the
+# Testcontainers-backed redis revocation tests.
+security:
+  revocation:
+    enabled: false

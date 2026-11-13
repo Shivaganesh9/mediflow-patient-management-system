@@ -30,5 +30,6 @@ public class Role extends BaseEntity {
     @ManyToMany(mappedBy = "roles")
     @ToString.Exclude
     @EqualsAndHashCode.Exclude
+    @Builder.Default
     private Set<User> users = new HashSet<>();
 }

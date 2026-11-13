@@ -16,19 +16,19 @@ Manages the patient master data that other services reference via `patientId` (w
 ## Endpoints
 | Method | Path | Roles | Notes |
 |---|---|---|---|
-| POST | `/api/v1/patients` | ADMIN, PATIENT, DOCTOR, STAFF | `userId` required unless caller is PATIENT (then forced to self) |
+| POST | `/api/v1/patients` | ADMIN, PATIENT, DOCTOR | `userId` required unless caller is PATIENT (then forced to self); NURSE/BILLING_STAFF/SUPPORT â†’ 403 |
 | GET | `/api/v1/patients` | Any authenticated | Search + paged (default 20, sort lastName); PATIENT forced to own profile |
 | GET | `/api/v1/patients/{patientId}` | Any authenticated | Ownership-scoped for PATIENT |
-| PUT | `/api/v1/patients/{patientId}` | ADMIN, DOCTOR, STAFF | NOT allowed for PATIENT |
+| PUT | `/api/v1/patients/{patientId}` | ADMIN, DOCTOR | NOT allowed for PATIENT; staff roles â†’ 403 |
 | DELETE | `/api/v1/patients/{patientId}` | ADMIN | Soft delete, `204` |
 
 ## Security / roles
-Role checks in `SecurityConfig`; ownership in `PatientService.resolvePatientIdentity` / `assertPatientProfileAccess`. A `PATIENT` caller cannot target another user's `patientId` (403), cannot update their own profile (PUT is role-blocked), and the patient list/search returns only their own profile (403 if a `patientId` filter targets another patient).
+Role checks in `SecurityConfig`; ownership in `PatientService.resolvePatientIdentity` / `assertPatientProfileAccess`. A `PATIENT` caller cannot target another user's `patientId` (403), cannot update their own profile (PUT is role-blocked), and the patient list/search returns only their own profile (403 if a `patientId` filter targets another patient). Profile writes are limited to ADMIN/PATIENT/DOCTOR on create and ADMIN/DOCTOR on update; the other roles (`NURSE`, `BILLING_STAFF`, `SUPPORT`) and any unknown/obsolete role receive 403. Missing or invalid tokens receive 401.
 
 ## Database / migrations
 - PostgreSQL, `ddl-auto: validate`, Flyway `classpath:db/migration`.
-- `V1__init_patient_schema.sql` — `patients` table.
-- `V2__add_patient_contact_insurance_and_version.sql` — emergency contacts, insurance fields, `version`, search indexes.
+- `V1__init_patient_schema.sql` ï¿½ `patients` table.
+- `V2__add_patient_contact_insurance_and_version.sql` ï¿½ emergency contacts, insurance fields, `version`, search indexes.
 
 ## Kafka
 None in code (the module ships a Spring Kafka dependency and a dead producer config in `application.yml`; no topics are produced or consumed).
@@ -42,13 +42,13 @@ mvn -pl backend/patient-service -am spring-boot:run
 Dev-only seeder (`@Profile("seed")`, `PatientDevDataSeeder`) creates two patients; the first
 patient's `patientId` equals the auth `patient` user ID so frontend scoping by `user.id` works.
 Enable with `mvn -pl backend/patient-service -am spring-boot:run -Dspring-boot.run.profiles=dev,seed`.
-Idempotent (skips existing patient IDs). See `docs/runbook.md` §2.1.
+Idempotent (skips existing patient IDs). See `docs/runbook.md` ï¿½2.1.
 
 ## Test
 ```bash
 mvn -pl backend/patient-service test
 ```
-Unit (Mockito) + `@DataJpaTest` (H2) + MockMvc security/controller integration tests (real JWTs; PATIENT list scoping + ownership). Flyway disabled in tests; schema from JPA entities.
+Unit (Mockito) + `@DataJpaTest` (H2) + MockMvc security/controller integration tests (real JWTs; role matrix, PATIENT list scoping + ownership, 401/403). Flyway disabled in tests; schema from JPA entities.
 
 ## Environment variables
 | Variable | Default | Notes |

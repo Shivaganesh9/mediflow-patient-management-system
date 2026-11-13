@@ -14,7 +14,14 @@ import java.util.UUID;
 @Component
 public class AccessControlService {
 
-    private static final Set<String> STAFF_ROLES = Set.of("BILLING_STAFF", "STAFF");
+    /**
+     * Roles allowed to read every invoice. Billing reads are intentionally
+     * organisation-wide for authenticated care/finance staff, but the set is
+     * explicit so unknown or future roles are denied instead of implicitly
+     * allowed. Patient reads are scoped to the caller's own invoices below.
+     */
+    private static final Set<String> READ_ALL_ROLES =
+            Set.of("BILLING_STAFF", "DOCTOR", "NURSE", "SUPPORT");
 
     public Optional<AuthenticatedUser> currentUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -48,7 +55,7 @@ public class AccessControlService {
     }
 
     public boolean hasStaffAccess() {
-        return isAdmin() || STAFF_ROLES.stream().anyMatch(this::hasRole);
+        return isAdmin() || READ_ALL_ROLES.stream().anyMatch(this::hasRole);
     }
 
     public boolean hasRole(String role) {
@@ -70,7 +77,7 @@ public class AccessControlService {
         if (isPatient()) {
             return userId != null && invoice.getPatientId().equals(userId);
         }
-        return true;
+        return false;
     }
 
     public void assertCanRead(Invoice invoice) {
@@ -87,7 +94,10 @@ public class AccessControlService {
             }
             return userId;
         }
-        return requested;
+        if (hasStaffAccess()) {
+            return requested;
+        }
+        throw new AccessDeniedException("You do not have permission to access invoices");
     }
 
     private UUID requireUserId() {

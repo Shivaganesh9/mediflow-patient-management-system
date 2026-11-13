@@ -267,6 +267,39 @@ class AppointmentControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.totalElements").value(1));
     }
 
+    @Test
+    void billingStaffAndSupportCanReadAnyAppointment() throws Exception {
+        String appointmentId = createAppointment(UUID.randomUUID(), UUID.randomUUID(), adminToken());
+
+        mockMvc.perform(get("/api/v1/appointments/" + appointmentId)
+                        .header("Authorization", "Bearer "
+                                + token("billing1", UUID.randomUUID(), List.of("BILLING_STAFF"))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/v1/appointments/" + appointmentId)
+                        .header("Authorization", "Bearer "
+                                + token("support1", UUID.randomUUID(), List.of("SUPPORT"))))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void unknownAndLegacyRolesAreForbidden() throws Exception {
+        String appointmentId = createAppointment(UUID.randomUUID(), UUID.randomUUID(), adminToken());
+
+        for (String role : List.of("AUDITOR", "STAFF")) {
+            mockMvc.perform(get("/api/v1/appointments/" + appointmentId)
+                            .header("Authorization", "Bearer "
+                                    + token(role.toLowerCase(), UUID.randomUUID(), List.of(role))))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    void unauthenticatedRequestIsRejected() throws Exception {
+        mockMvc.perform(get("/api/v1/appointments"))
+                .andExpect(status().isUnauthorized());
+    }
+
     private String createAppointment(UUID patientId, UUID doctorId, String token) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/v1/appointments")
                         .header("Authorization", "Bearer " + token)

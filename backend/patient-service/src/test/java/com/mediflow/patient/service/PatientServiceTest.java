@@ -5,6 +5,7 @@ import com.mediflow.common.exception.ResourceNotFoundException;
 import com.mediflow.patient.dto.CreatePatientRequest;
 import com.mediflow.patient.dto.PatientResponse;
 import com.mediflow.patient.entity.Patient;
+import com.mediflow.patient.identity.IdentityVerifier;
 import com.mediflow.patient.mapper.PatientMapper;
 import com.mediflow.patient.repository.PatientRepository;
 import com.mediflow.patient.security.CurrentUser;
@@ -24,6 +25,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,6 +41,9 @@ class PatientServiceTest {
 
     @Mock
     private CurrentUser currentUser;
+
+    @Mock
+    private IdentityVerifier identityVerifier;
 
     @InjectMocks
     private PatientService patientService;
@@ -106,6 +111,7 @@ class PatientServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> patientService.createPatient(request));
         verify(patientRepository, never()).save(any());
+        verify(identityVerifier, never()).verifyIdentity(any(), any());
     }
 
     @Test
@@ -114,6 +120,70 @@ class PatientServiceTest {
         when(currentUser.hasRole("PATIENT")).thenReturn(false);
         when(patientRepository.existsByEmailAndDeletedAtIsNull(any())).thenReturn(false);
         when(patientRepository.existsByPatientIdAndDeletedAtIsNull(targetUserId)).thenReturn(true);
+
+        CreatePatientRequest request = request("alice@example.com");
+        request.setUserId(targetUserId);
+
+        assertThrows(IllegalArgumentException.class, () -> patientService.createPatient(request));
+        verify(patientRepository, never()).save(any());
+    }
+
+    @Test
+    void createPatientByAdminVerifiesReferencedIdentityAgainstAuthService() {
+        UUID targetUserId = UUID.randomUUID();
+        when(currentUser.hasRole("PATIENT")).thenReturn(false);
+        when(currentUser.currentUsername()).thenReturn("admin");
+        when(patientRepository.existsByEmailAndDeletedAtIsNull(any())).thenReturn(false);
+        when(patientRepository.existsByPatientIdAndDeletedAtIsNull(targetUserId)).thenReturn(false);
+        when(patientMapper.toEntity(any())).thenAnswer(invocation -> new Patient());
+        when(patientRepository.save(any(Patient.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CreatePatientRequest request = request("alice@example.com");
+        request.setUserId(targetUserId);
+
+        patientService.createPatient(request);
+
+        verify(identityVerifier).verifyIdentity(targetUserId, "PATIENT");
+    }
+
+    @Test
+    void createPatientByPatientSkipsRemoteIdentityVerification() {
+        UUID uid = UUID.randomUUID();
+        when(currentUser.hasRole("PATIENT")).thenReturn(true);
+        when(currentUser.requireCurrentUserId()).thenReturn(uid);
+        when(currentUser.currentUsername()).thenReturn("alice");
+        when(patientRepository.existsByEmailAndDeletedAtIsNull(any())).thenReturn(false);
+        when(patientRepository.existsByPatientIdAndDeletedAtIsNull(uid)).thenReturn(false);
+        when(patientMapper.toEntity(any())).thenAnswer(invocation -> new Patient());
+        when(patientRepository.save(any(Patient.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        patientService.createPatient(request("alice@example.com"));
+
+        verify(identityVerifier, never()).verifyIdentity(any(), any());
+    }
+
+    @Test
+    void createPatientRejectsIdentityThatIsNotActive() {
+        UUID targetUserId = UUID.randomUUID();
+        when(currentUser.hasRole("PATIENT")).thenReturn(false);
+        when(patientRepository.existsByEmailAndDeletedAtIsNull(any())).thenReturn(false);
+        doThrow(new ConflictException("The referenced user account is not active"))
+                .when(identityVerifier).verifyIdentity(targetUserId, "PATIENT");
+
+        CreatePatientRequest request = request("alice@example.com");
+        request.setUserId(targetUserId);
+
+        assertThrows(ConflictException.class, () -> patientService.createPatient(request));
+        verify(patientRepository, never()).save(any());
+    }
+
+    @Test
+    void createPatientRejectsIdentityWithWrongRole() {
+        UUID targetUserId = UUID.randomUUID();
+        when(currentUser.hasRole("PATIENT")).thenReturn(false);
+        when(patientRepository.existsByEmailAndDeletedAtIsNull(any())).thenReturn(false);
+        doThrow(new IllegalArgumentException("userId does not reference a PATIENT identity"))
+                .when(identityVerifier).verifyIdentity(targetUserId, "PATIENT");
 
         CreatePatientRequest request = request("alice@example.com");
         request.setUserId(targetUserId);

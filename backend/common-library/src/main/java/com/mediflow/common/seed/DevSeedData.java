@@ -21,18 +21,30 @@ public final class DevSeedData {
     public static final UUID PATIENT_USER_ID = uuid("00000000-0000-0000-0000-000000000003");
     public static final UUID SECOND_DOCTOR_ID = uuid("00000000-0000-0000-0000-000000000004");
     public static final UUID SECOND_PATIENT_ID = uuid("00000000-0000-0000-0000-000000000005");
+    public static final UUID NURSE_USER_ID = uuid("00000000-0000-0000-0000-000000000006");
+    public static final UUID BILLING_STAFF_USER_ID = uuid("00000000-0000-0000-0000-000000000007");
+    public static final UUID SUPPORT_USER_ID = uuid("00000000-0000-0000-0000-000000000008");
 
     public static final String ADMIN_USERNAME = "admin";
     public static final String DOCTOR_USERNAME = "doctor";
     public static final String PATIENT_USERNAME = "patient";
+    public static final String NURSE_USERNAME = "nurse";
+    public static final String BILLING_STAFF_USERNAME = "billing";
+    public static final String SUPPORT_USERNAME = "support";
 
     public static final String ADMIN_EMAIL = "admin@mediflow.test";
     public static final String DOCTOR_EMAIL = "doctor@mediflow.test";
     public static final String PATIENT_EMAIL = "patient@mediflow.test";
+    public static final String NURSE_EMAIL = "nurse@mediflow.test";
+    public static final String BILLING_STAFF_EMAIL = "billing@mediflow.test";
+    public static final String SUPPORT_EMAIL = "support@mediflow.test";
 
     public static final String ADMIN_PASSWORD = "Admin@123";
     public static final String DOCTOR_PASSWORD = "Doctor@123";
     public static final String PATIENT_PASSWORD = "Patient@123";
+    public static final String NURSE_PASSWORD = "Nurse@123";
+    public static final String BILLING_STAFF_PASSWORD = "Billing@123";
+    public static final String SUPPORT_PASSWORD = "Support@123";
 
     public static final UUID APPOINTMENT_1_ID = uuid("00000000-0000-0000-0000-000000000010");
     public static final UUID APPOINTMENT_2_ID = uuid("00000000-0000-0000-0000-000000000011");

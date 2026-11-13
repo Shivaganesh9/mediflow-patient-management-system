@@ -30,3 +30,9 @@ cors:
 eureka:
   client:
     enabled: false
+
+# Unit/integration tests run without Redis; revocation is covered by the
+# Testcontainers-backed redis revocation tests.
+security:
+  revocation:
+    enabled: false

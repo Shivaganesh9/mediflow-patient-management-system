@@ -293,6 +293,60 @@ class InvoiceControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.paidAmount").value(0.0));
     }
 
+    @Test
+    void clinicalStaffCanReadAnyInvoice() throws Exception {
+        String invoiceId = createInvoice();
+
+        for (String role : List.of("DOCTOR", "NURSE", "SUPPORT")) {
+            mockMvc.perform(get("/api/v1/invoices/" + invoiceId)
+                            .header("Authorization", "Bearer " + token(role.toLowerCase(), UUID.randomUUID(),
+                                    List.of(role))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.invoiceId").value(invoiceId));
+        }
+    }
+
+    @Test
+    void unknownRoleCannotReadOrListInvoices() throws Exception {
+        String invoiceId = createInvoice();
+        String legacyToken = token("legacy-staff", UUID.randomUUID(), List.of("STAFF"));
+
+        mockMvc.perform(get("/api/v1/invoices/" + invoiceId)
+                        .header("Authorization", "Bearer " + legacyToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/v1/invoices")
+                        .header("Authorization", "Bearer " + legacyToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void rolesOtherThanAdminAndBillingStaffCannotWriteInvoices() throws Exception {
+        String invoiceId = createInvoice();
+
+        for (String role : List.of("DOCTOR", "NURSE", "SUPPORT", "PATIENT")) {
+            String roleToken = token(role.toLowerCase(), UUID.randomUUID(), List.of(role));
+
+            mockMvc.perform(post("/api/v1/invoices")
+                            .header("Authorization", "Bearer " + roleToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(invoicePayload()))
+                    .andExpect(status().isForbidden());
+
+            mockMvc.perform(post("/api/v1/invoices/" + invoiceId + "/payments")
+                            .header("Authorization", "Bearer " + roleToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"amount\":10,\"method\":\"CARD\"}"))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    void unauthenticatedRequestIsRejected() throws Exception {
+        mockMvc.perform(get("/api/v1/invoices"))
+                .andExpect(status().isUnauthorized());
+    }
+
     private String createInvoice() throws Exception {
         return createInvoice(UUID.randomUUID(), billingToken());
     }

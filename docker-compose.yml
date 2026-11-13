@@ -34,5 +34,21 @@
     ports:
       - "9092:9092"
 
+  # Shared access-token revocation store. Every service reads the same keys, so a token
+  # revoked in auth-service is rejected by the other services as well.
+  redis:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres-data:
+  redis-data:

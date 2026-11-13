@@ -24,6 +24,10 @@ spring:
 jwt:
   secret: ${JWT_SECRET}
 
+services:
+  # Auth-service owns identities; profile creation validates userId references against it.
+  auth-service-url: ${AUTH_SERVICE_URL:http://localhost:8081}
+
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
 
@@ -37,3 +41,16 @@ springdoc:
     title: MediFlow Doctor Service API
     description: Doctor profile and schedule management APIs (profiles, availability, leaves).
     version: 1.0
+
+# Shared access-token revocation (Redis). Every service must see the same revocation state.
+security:
+  revocation:
+    enabled: ${SECURITY_REVOCATION_ENABLED:true}
+    fail-open: ${SECURITY_REVOCATION_FAIL_OPEN:false}
+    key-prefix: ${SECURITY_REVOCATION_KEY_PREFIX:mediflow:revoke:}
+    marker-ttl: ${SECURITY_REVOCATION_MARKER_TTL:7d}
+
+spring.data.redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+  timeout: 2s

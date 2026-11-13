@@ -17,7 +17,7 @@ export function PatientDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const canEdit = hasRole('ADMIN', 'DOCTOR', 'BILLING_STAFF', 'SUPPORT', 'NURSE');
+  const canEdit = hasRole('ADMIN', 'DOCTOR');
   const canDelete = hasRole('ADMIN');
 
   const detail = useAsync(() => patientsApi.get(patientId), [patientId]);
