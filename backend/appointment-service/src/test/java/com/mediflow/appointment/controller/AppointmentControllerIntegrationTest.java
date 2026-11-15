@@ -89,6 +89,39 @@ class AppointmentControllerIntegrationTest {
     }
 
     @Test
+    void createAppointmentRejectsMalformedJsonWithBadRequest() throws Exception {
+        mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{not-json"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    void invalidPathVariableReturnsBadRequest() throws Exception {
+        mockMvc.perform(get("/api/v1/appointments/not-a-uuid")
+                        .header("Authorization", "Bearer " + doctorToken))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void healthAndReadinessProbesArePublic() throws Exception {
+        mockMvc.perform(get("/actuator/health"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+        mockMvc.perform(get("/actuator/health/readiness"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+    }
+
+    @Test
+    void metricsEndpointRequiresAuthentication() throws Exception {
+        mockMvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().is4xxClientError());
+    }
+
+    @Test
     void createAppointmentByPatientUsesOwnPatientId() throws Exception {
         UUID patientId = UUID.randomUUID();
         String patientToken = token("patient1", patientId, List.of("PATIENT"));

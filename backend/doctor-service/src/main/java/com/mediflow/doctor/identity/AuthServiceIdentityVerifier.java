@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.mediflow.common.enums.AccountStatus;
 import com.mediflow.common.exception.ConflictException;
 import com.mediflow.common.exception.ServiceUnavailableException;
+import com.mediflow.common.logging.CorrelationContext;
+import com.mediflow.common.resilience.CircuitBreaker;
 import com.mediflow.common.response.ApiResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,8 +14,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -25,17 +27,10 @@ import java.util.UUID;
 /**
  * Validates profile references against auth-service, the only service that owns user identities.
  *
- * <p>Design decisions:</p>
- * <ul>
- *   <li><strong>No shared database access</strong>: services keep separate databases, so the identity
- *       is resolved through the dedicated internal endpoint {@code /internal/identities/{userId}}.</li>
- *   <li><strong>Caller credentials are forwarded</strong> (the admin/staff JWT): auth-service authorizes
- *       the lookup itself, so a compromised caller path cannot use this service to enumerate identities
- *       with a patient token.</li>
- *   <li><strong>Fail closed</strong>: an unreachable or misbehaving auth-service yields 503 instead of
- *       creating a profile against an unverified identity.</li>
- *   <li>Short timeouts keep profile creation responsive when auth-service is degraded.</li>
- * </ul>
+ * <p>The lookup forwards the caller's bearer token, uses short timeouts and fails closed with 503.
+ * Repeated transport/5xx failures open a circuit breaker for 30 seconds so a degraded auth-service
+ * is not hammered by every profile write. A 404/401/403 response proves the dependency is healthy
+ * and therefore never counts as a breaker failure.</p>
  */
 @Component
 public class AuthServiceIdentityVerifier implements IdentityVerifier {
@@ -43,24 +38,36 @@ public class AuthServiceIdentityVerifier implements IdentityVerifier {
     private static final String IDENTITY_PATH = "/internal/identities/{userId}";
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(3);
+    private static final int FAILURE_THRESHOLD = 5;
+    private static final Duration OPEN_DURATION = Duration.ofSeconds(30);
 
     private final RestClient restClient;
+    private final CircuitBreaker circuitBreaker;
 
     @Autowired
     public AuthServiceIdentityVerifier(RestClient.Builder restClientBuilder,
-                                       @Value("${services.auth-service-url:http://localhost:8081}") String authServiceUrl) {
-        this(buildRestClient(restClientBuilder, authServiceUrl));
+                                       @Value("${services.auth-service-url:http://localhost:8081}") String authServiceUrl,
+                                       @Value("${services.auth-service-connect-timeout-ms:1000}") int connectTimeoutMs,
+                                       @Value("${services.auth-service-read-timeout-ms:3000}") int readTimeoutMs) {
+        this(buildRestClient(restClientBuilder, authServiceUrl, connectTimeoutMs, readTimeoutMs));
     }
 
     /** Test seam: allows exercising the verifier against a stubbed {@link RestClient}. */
     AuthServiceIdentityVerifier(RestClient restClient) {
-        this.restClient = restClient;
+        this(restClient, new CircuitBreaker(FAILURE_THRESHOLD, OPEN_DURATION));
     }
 
-    private static RestClient buildRestClient(RestClient.Builder restClientBuilder, String authServiceUrl) {
+    /** Test seam: lets a test drive breaker transitions with a fast threshold/cool-down. */
+    AuthServiceIdentityVerifier(RestClient restClient, CircuitBreaker circuitBreaker) {
+        this.restClient = restClient;
+        this.circuitBreaker = circuitBreaker;
+    }
+
+    private static RestClient buildRestClient(RestClient.Builder restClientBuilder, String authServiceUrl,
+                                              int connectTimeoutMs, int readTimeoutMs) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout((int) CONNECT_TIMEOUT.toMillis());
-        requestFactory.setReadTimeout((int) READ_TIMEOUT.toMillis());
+        requestFactory.setConnectTimeout(connectTimeoutMs > 0 ? connectTimeoutMs : (int) CONNECT_TIMEOUT.toMillis());
+        requestFactory.setReadTimeout(readTimeoutMs > 0 ? readTimeoutMs : (int) READ_TIMEOUT.toMillis());
         return restClientBuilder
                 .baseUrl(authServiceUrl)
                 .requestFactory(requestFactory)
@@ -80,27 +87,46 @@ public class AuthServiceIdentityVerifier implements IdentityVerifier {
     }
 
     private Identity lookup(UUID userId) {
+        // Resolve the caller credential before consulting the breaker: a missing token is a caller
+        // error, not a dependency failure, and must not consume the single half-open trial permit.
+        String authorization = callerAuthorizationHeader();
+        if (!circuitBreaker.allowRequest()) {
+            throw new ServiceUnavailableException("Identity verification is temporarily unavailable");
+        }
         try {
-            ApiResponse<Identity> response = restClient.get()
+            RestClient.RequestHeadersSpec<?> request = restClient.get()
                     .uri(IDENTITY_PATH, userId)
-                    .header(HttpHeaders.AUTHORIZATION, callerAuthorizationHeader())
-                    .retrieve()
+                    .header(HttpHeaders.AUTHORIZATION, authorization);
+            String correlationId = CorrelationContext.current();
+            if (correlationId != null) {
+                request = request.header(CorrelationContext.HEADER, correlationId);
+            }
+
+            ApiResponse<Identity> response = request.retrieve()
                     .body(new ParameterizedTypeReference<ApiResponse<Identity>>() { });
 
             if (response == null || response.getData() == null || response.getData().userId() == null) {
+                circuitBreaker.recordFailure();
                 throw new ServiceUnavailableException("Identity verification returned an empty response");
             }
+            circuitBreaker.recordSuccess();
             return response.getData();
         } catch (RestClientResponseException ex) {
             int status = ex.getStatusCode().value();
             if (status == 404) {
+                circuitBreaker.recordSuccess();
                 throw new IllegalArgumentException("userId does not reference an existing user");
             }
             if (status == 401 || status == 403) {
+                circuitBreaker.recordSuccess();
                 throw new AccessDeniedException("Not allowed to verify the referenced user identity");
             }
+            circuitBreaker.recordFailure();
             throw new ServiceUnavailableException("Identity verification is temporarily unavailable", ex);
-        } catch (ResourceAccessException ex) {
+        } catch (RestClientException ex) {
+            // Covers transport failures and response-conversion errors, so every permitted call
+            // reaches a breaker transition and never leaks a trial permit.
+            circuitBreaker.recordFailure();
             throw new ServiceUnavailableException("Identity verification is temporarily unavailable", ex);
         }
     }

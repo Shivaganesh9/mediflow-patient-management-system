@@ -2,6 +2,7 @@ package com.mediflow.patient.identity;
 
 import com.mediflow.common.exception.ConflictException;
 import com.mediflow.common.exception.ServiceUnavailableException;
+import com.mediflow.common.resilience.CircuitBreaker;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -23,6 +24,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -133,6 +135,28 @@ class AuthServiceIdentityVerifierTest {
     }
 
     @Test
+    void opensCircuitBreakerAfterRepeatedTransportFailures() {
+        java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+        ClientHttpRequestFactory failingFactory = (uri, httpMethod) -> {
+            attempts.incrementAndGet();
+            throw new IOException("connection refused");
+        };
+        AuthServiceIdentityVerifier verifier = new AuthServiceIdentityVerifier(
+                RestClient.builder().baseUrl(BASE_URL).requestFactory(failingFactory).build());
+        stubCallerToken("Bearer admin-token");
+
+        for (int i = 0; i < 5; i++) {
+            assertThatThrownBy(() -> verifier.verifyIdentity(UUID.randomUUID(), "PATIENT"))
+                    .isInstanceOf(ServiceUnavailableException.class);
+        }
+        // The sixth call fails fast without touching the network.
+        assertThatThrownBy(() -> verifier.verifyIdentity(UUID.randomUUID(), "PATIENT"))
+                .isInstanceOf(ServiceUnavailableException.class)
+                .hasMessageContaining("temporarily unavailable");
+        assertThat(attempts.get()).isEqualTo(5);
+    }
+
+    @Test
     void refusesToCallAuthServiceWithoutCallerCredentials() {
         AuthServiceIdentityVerifier verifier = verifierReturning(HttpStatus.OK,
                 identityBody(UUID.randomUUID(), "ACTIVE", "PATIENT"));
@@ -142,7 +166,31 @@ class AuthServiceIdentityVerifierTest {
                 .hasMessageContaining("bearer token");
     }
 
+    @Test
+    void missingCallerTokenDoesNotConsumeTheHalfOpenTrialPermit() {
+        // One failure opens the breaker; a zero cool-down makes the next call half-open.
+        CircuitBreaker breaker = new CircuitBreaker(1, Duration.ZERO);
+        breaker.allowRequest();
+        breaker.recordFailure();
+        AuthServiceIdentityVerifier verifier = verifierReturning(HttpStatus.OK,
+                identityBody(UUID.randomUUID(), "ACTIVE", "PATIENT"), breaker);
+
+        // No caller token: a caller error, so the half-open trial must remain available.
+        assertThatThrownBy(() -> verifier.verifyIdentity(UUID.randomUUID(), "PATIENT"))
+                .isInstanceOf(IllegalStateException.class);
+
+        stubCallerToken("Bearer admin-token");
+        assertThatCode(() -> verifier.verifyIdentity(UUID.randomUUID(), "PATIENT"))
+                .doesNotThrowAnyException();
+        assertThat(breaker.state()).isEqualTo(CircuitBreaker.State.CLOSED);
+    }
+
     private AuthServiceIdentityVerifier verifierReturning(HttpStatus status, String body) {
+        return verifierReturning(status, body, null);
+    }
+
+    private AuthServiceIdentityVerifier verifierReturning(HttpStatus status, String body,
+                                                         CircuitBreaker breaker) {
         MockClientHttpResponse response =
                 new MockClientHttpResponse(body.getBytes(StandardCharsets.UTF_8), status);
         response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
@@ -152,8 +200,10 @@ class AuthServiceIdentityVerifierTest {
             delegate.setResponse(response);
             return new CapturingRequest(delegate);
         };
-        return new AuthServiceIdentityVerifier(
-                RestClient.builder().baseUrl(BASE_URL).requestFactory(factory).build());
+        RestClient restClient = RestClient.builder().baseUrl(BASE_URL).requestFactory(factory).build();
+        return breaker == null
+                ? new AuthServiceIdentityVerifier(restClient)
+                : new AuthServiceIdentityVerifier(restClient, breaker);
     }
 
     /**

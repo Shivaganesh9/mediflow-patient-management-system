@@ -44,7 +44,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/api/v1/auth/password-reset/**",
-                                "/swagger-ui/**", "/v3/api-docs/**", "/actuator/health").permitAll()
+                                "/swagger-ui/**", "/v3/api-docs/**", "/actuator/health", "/actuator/health/**",
+                                "/actuator/info").permitAll()
                         // Administrative identity lifecycle (status, roles, user directory).
                         .requestMatchers("/api/v1/auth/users/**").hasRole("ADMIN")
                         // Service-to-service identity lookup: never public, and only reachable by

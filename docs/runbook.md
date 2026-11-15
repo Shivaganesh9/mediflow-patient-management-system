@@ -434,7 +434,7 @@ docker compose logs -f postgres
 docker compose logs -f kafka
 ```
 
-There is currently **no structured logging or log file aggregation** — grep terminal output for a service name/port to isolate its logs. `GlobalExceptionHandler` (common-library) logs unexpected 500s (`ERROR Unexpected error` + stack trace) before returning the generic 500 body — when debugging a 500, check the service's terminal output first.
+There is currently **no structured log aggregation or log file output** — grep terminal output for a service name/port to isolate its logs. Every log line now carries a correlation id: `LEVEL [correlationId:<id>] ...`. The gateway injects `X-Correlation-ID` (or reuses a caller-supplied safe value), `CorrelationIdFilter` puts it in the MDC, and consumers restore the producer's id from the event, so one id links the HTTP request and the asynchronous work it caused. `GlobalExceptionHandler` (common-library) logs unexpected 500s (`ERROR Unexpected error` + stack trace) and maps client mistakes to 4xx (bad JSON → 400, optimistic-lock conflict → 409, database outage → 503) before returning the `ApiResponse` error body.
 
 ## 11.5 Full-stack E2E demo flow (verified 2026-08-19)
 
@@ -531,3 +531,80 @@ cd frontend/mediflow-ui && docker build -t mediflow/mediflow-ui .
 > The gateway routes are defined in `application.yml` and target direct service URLs (defaults to `localhost`). When running images in Docker, set the per-service `*_SERVICE_URL` env vars to the host machine address.
 
 CI runs all of this automatically via `.github/workflows/ci.yml` (backend `mvn verify`, frontend `npm ci` + build, and a 9-service Docker image matrix).
+
+## 15. Health, metrics and graceful shutdown
+
+- **Probes.** Every service exposes `/actuator/health` (aggregate), `/actuator/health/liveness` and `/actuator/health/readiness`. Only `readinessState` and `db` are in the readiness group, so a Kafka/Redis outage does not pull an instance out of rotation. `/actuator/health/**` and `/actuator/info` are public; everything else under `/actuator` (notably `/actuator/prometheus`) requires authentication.
+- **Kafka indicator.** appointment/billing/medical-record/notification/analytics expose a Kafka health indicator (2s `describeCluster` probe). auth/patient/doctor set `management.health.kafka.enabled: false`.
+- **Prometheus.** The eight backend services ship `micrometer-registry-prometheus` and expose `/actuator/prometheus` (authenticated; the api-gateway exposes health/info only). Useful series:
+  - `mediflow_outbox_published_total` / `mediflow_outbox_failed_total` / `mediflow_outbox_dead_total` (tag `topic`) — producer relay health.
+  - `mediflow_kafka_consumer_retries_total` / `mediflow_kafka_consumer_dead_letter_total` (tag `topic`) — consumer retry/DLQ pressure.
+  - `mediflow_security_authentication_failures_total` (tag `reason`) — credential attacks/lockouts.
+  - `http_server_requests_seconds_*`, `hikaricp_connections_*`, `jvm_*` — standard Boot/Micrometer series. Every series is tagged `application=<spring.application.name>`.
+- **Graceful shutdown.** `server.shutdown: graceful` with a 30s `spring.lifecycle.timeout-per-shutdown-phase`. Kafka consumers finish the in-flight record; in-flight HTTP requests complete. Compose services use `stop_grace_period: 30s` so Docker does not SIGKILL early.
+- **JVM.** Images run as non-root UID/GID `10001` with `-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -Duser.timezone=Asia/Kolkata`.
+
+## 16. Recovery procedures
+
+### 16.1 Kafka outage or broker loss
+
+**Symptoms:** outbox `PENDING` count grows; consumer lag grows; `/actuator/health` shows `kafka: DOWN`; producer logs show `TimeoutException`/`NodeDisconnectedException`.
+
+1. Check the broker: `docker compose ps kafka`; `docker exec -it $(docker compose ps -q kafka) /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092`.
+2. Restart it: `docker compose restart kafka`. The KRaft single node keeps its log directory on the container volume; a `down -v` destroys unconsumed events.
+3. **No data is lost while Kafka is down.** Producers keep appending to `outbox_events`; the relay retries with back-off and resumes automatically after the broker returns. Verify recovery:
+   ```sql
+   -- run in appointment_db / billing_db / medical_record_db
+   SELECT status, count(*) FROM outbox_events GROUP BY status ORDER BY status;
+   ```
+   `PENDING` should drain to 0; rows stay `PUBLISHED`.
+4. **Dead outbox rows.** `status = 'DEAD'` means the retry budget (`OUTBOX_PUBLISHER_MAX_ATTEMPTS`) was exhausted. Inspect `last_error`, fix the cause, then replay by resetting the row — the relay picks it up on the next tick:
+   ```sql
+   UPDATE outbox_events
+      SET status = 'PENDING', attempts = 0, next_attempt_at = now(), last_error = NULL
+    WHERE status = 'DEAD';
+   ```
+   Replay is safe: consumers deduplicate on `eventId`.
+5. **DLQ drain.** If consumers moved records to `dlq.<topic>`, fix the handler bug first, then replay the DLQ into the source topic (e.g. with `kafka-console-consumer` piped to `kafka-console-producer`, preserving keys and headers) or write a small replay consumer. Do **not** delete a DLQ before the records have been triaged — it is the only copy.
+6. **Consumer lag / stuck group.** Rebalancing is normal after a restart. If a group is wedged:
+   ```bash
+   docker exec -it $(docker compose ps -q kafka) /opt/kafka/bin/kafka-consumer-groups.sh \
+     --bootstrap-server localhost:9092 --describe --group notification-service
+   ```
+   Restart the consumer service. Avoid `--reset-offsets` unless you have confirmed the lost messages are recoverable from the producer outbox.
+
+### 16.2 Redis (token revocation store) outage
+
+**Symptoms:** every protected request returns **503** across all services (`RevocationUnavailableException`); logs show connection refused/timeout. This is the designed fail-closed behaviour with `SECURITY_REVOCATION_FAIL_OPEN=false` (the default).
+
+1. Check/restart: `docker compose ps redis`; `docker exec -it $(docker compose ps -q redis) redis-cli ping` must answer `PONG`; `docker compose restart redis`.
+2. Confirm every service points at the **same** host/port and uses the same `SECURITY_REVOCATION_KEY_PREFIX`; a split store silently breaks revocation.
+3. **Token state after a Redis restart.** Redis runs with `--appendonly yes`, so markers survive a normal restart. If the volume was lost, all revocation markers are gone: previously logged-out/suspended access tokens become valid again until they expire (≤ `JWT_EXPIRATION`, default 15 min). Mitigate by rotating `JWT_SECRET` (invalidates **all** tokens, forcing every user to sign in) or waiting out the access-token lifetime. Suspended accounts are still blocked by the DB status check at login.
+4. **Never** "fix" an outage by setting `SECURITY_REVOCATION_FAIL_OPEN=true` in production — it accepts revoked tokens whenever Redis is down. It exists for local debugging only.
+5. Marker TTL (`SECURITY_REVOCATION_MARKER_TTL`, default 7d) must exceed the access-token lifetime; otherwise a logged-out token could outlive its revocation marker.
+
+### 16.3 PostgreSQL outage, corruption or restore
+
+**Symptoms:** `503` with "Data store is temporarily unavailable" from `GlobalExceptionHandler`; Hikari `connectionTimeout`/`Connection is not available` logs; Flyway validation failure at startup.
+
+1. Check/restart: `docker compose ps postgres`; `docker exec -it $(docker compose ps -q postgres) pg_isready -U postgres`; `docker compose restart postgres`.
+2. **Connection pool exhaustion.** Look for `HikariPool ... connection is not available, request timed out` and `leakDetectionThreshold` warnings (`DB_LEAK_DETECTION_MS`, default 20s). A leak log names the code path that borrowed the connection; fix the missing `@Transactional`/unclosed stream. Raise `DB_POOL_MAX_SIZE` only after ruling out a leak.
+3. **Flyway validation error at startup.** `ddl-auto: validate` and Flyway checksums mean never edit an applied migration. Add a new numbered migration instead. If a checksum mismatch is reported because a file was edited locally, restore the original file; do not `flyway repair` in production unless you are certain a manual change was applied.
+4. **Backup/restore (local and production baseline).**
+   ```bash
+   # logical backup of one service DB
+   docker exec -t $(docker compose ps -q postgres) \
+     pg_dump -U postgres -Fc patient_db > patient_db.dump
+   # restore into a fresh database
+   docker exec -i $(docker compose ps -q postgres) \
+     createdb -U postgres patient_db_restore
+   docker exec -i $(docker compose ps -q postgres) \
+     pg_restore -U postgres -d patient_db_restore < patient_db.dump
+   ```
+   Restore and verify Flyway `schema_history` matches the dump, then point the service at the restored DB (`DB_URL`) and start it. **Outbox rows are part of the restore**: a restored DB may contain `PENDING` rows that were already published before the backup; replay is safe (consumers dedupe on `eventId`), but expect duplicate events.
+5. **Total local reset (destroys data):** `docker compose down -v && docker compose up -d`, then restart services with the `seed` profile (§2.1).
+6. **Corruption.** Stop the affected service first so it stops writing, restore the last good logical backup into a new database, then switch `DB_URL`. Cross-service references are by UUID only, so restoring one service's DB cannot break another service's schema, but rows may reference ids that no longer exist — reconcile via the owning service.
+
+### 16.4 Downstream auth-service degraded
+
+`patient-service`/`doctor-service` validate `userId` references through auth-service. The verifier uses a 1s connect/3s read timeout, no retries, and a circuit breaker (5 consecutive transport/5xx failures → open for 30s). While open, profile writes that need verification fail fast with **503**; reads are unaffected. Fix auth-service; the breaker closes automatically on the next successful probe after the 30s window.

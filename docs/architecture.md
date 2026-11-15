@@ -1,6 +1,6 @@
 # MediFlow Architecture
 
-*Status: reflects the implemented codebase (2026-08-14).*
+*Status: reflects the implemented codebase (2026-11-14).*
 
 ## 1. Overview
 
@@ -54,9 +54,22 @@ Each service follows `controller → service → repository → entity`, plus `d
 - Default per-service DBs (`patient_db`, `auth_db`, ...) are overridden by `.env` `DB_URL`. The checked-in `.env` does **not** set `DB_URL`, so services run against per-service DBs by default; set `DB_URL` to point all services at a single shared `mediflow` database if desired.
 - Each of the 9 runnable services has a `Dockerfile` + `.dockerignore` (Temurin 21 JRE). Maven produces a plain jar (used by reactor consumers) plus an executable `<service>-1.0.0-exec.jar` via the Spring Boot `repackage` goal with an `exec` classifier; images copy the `-exec` jar. GitHub Actions (`.github/workflows/ci.yml`) verifies backend tests, frontend build, and all 9 images.
 
-## 8. Known Limitations
+## 8. Reliability and Observability
 
-- Analytics service's `medical-record.updated.v1` topic is not consumed (only the created topic); no outbox pattern on producers.
+- **Transactional outbox (producers).** appointment/billing/medical-record services append the event JSON to an `outbox_events` table in the same transaction as the business write. A scheduled `OutboxRelay` publishes `PENDING` rows with a broker acknowledgement, marks them `PUBLISHED`, retries failures with exponential back-off, and marks exhausted rows `DEAD` for inspection. Delivery is at-least-once; consumers deduplicate on `eventId`. This removes the dual-write window (commit succeeded, event lost). Details in `docs/kafka-events.md` §4.
+- **Consumer hardening.** `ErrorHandlingDeserializer` (malformed records never kill the poll loop), `enable-auto-commit: false` with `ack-mode: record`, bounded exponential retry (5 attempts, 1s→20s), non-retryable deserialization errors, DLQ to `dlq.<topic>` with `failIfSendResultIsError=true`, and retry/DLQ Micrometer counters.
+- **Correlation.** The gateway injects/validates `X-Correlation-ID`; common-library `CorrelationIdFilter`/`CorrelationContext` propagate it into the MDC, error responses and domain-event envelopes; consumers restore it. Log lines carry `[correlationId:...]`.
+- **Synchronous resilience.** patient/doctor identity verification against auth-service has bounded connect/read timeouts, no automatic retries, a dependency-free circuit breaker (5 failures → 30s open), and forwards the caller's correlation id.
+- **Data access hardening.** Hikari pool bounds + `leakDetectionThreshold`, `open-in-view: false`, capped page size, Hibernate batch inserts/updates, composite search indexes, and lazy collections initialized inside their transactions (billing `@BatchSize(50)`).
+- **Error contract.** `GlobalExceptionHandler` maps validation/parse/param errors to 400, optimistic-lock and integrity conflicts to 409, unsupported media type to 415, method not allowed to 405, and database/revocation/downstream outages to 503, always in the `ApiResponse` envelope without leaking internals.
+- **Health/metrics/deploy.** Every service exposes `/actuator/health` + liveness/readiness probes (readiness = `readinessState` + `db` only); the eight backend services also expose authenticated `/actuator/prometheus` (the api-gateway has no edge security, so it exposes only health/info). A Kafka health indicator runs where Kafka is used. Graceful shutdown (30s), non-root container user, `MaxRAMPercentage=75`, `ExitOnOutOfMemoryError`; Kafka has a compose healthcheck and services `restart: unless-stopped`.
+- **Recovery.** Kafka/Redis/PostgreSQL recovery and outbox/DLQ replay procedures are in `docs/runbook.md` §15–16.
+
+## 9. Known Limitations
+
+- Analytics service's `medical-record.updated.v1` topic is not consumed (only the created topic).
 - Admin/staff-created patient and doctor profiles accept an explicit Auth user UUID without a synchronous check that the user exists (see `docs/security.md`).
-- No service registry, config server, rate limiting, tracing, or observability stack implemented.
+- Appointment range exclusion is enforced in application code only: two concurrent creates can still race past the overlap check (no PostgreSQL exclusion constraint yet).
+- Payment recording has no client-supplied idempotency key; a retried POST can double-record (the event side is idempotent, the write side is not).
+- No service registry, config server, rate limiting, distributed tracing or metrics/tracing stack implemented; outbox `PUBLISHED` rows are not archived automatically.
 - The frontend Dockerfile runs the Vite dev server, not a production static build.

@@ -69,7 +69,14 @@ public class InvoiceService {
     @Transactional(readOnly = true)
     public Page<Invoice> searchInvoices(InvoiceStatus status, UUID patientId, UUID appointmentId, Pageable pageable) {
         UUID scopedPatientId = accessControl.scopedPatientId(patientId);
-        return invoiceRepository.search(status, scopedPatientId, appointmentId, pageable);
+        Page<Invoice> invoices = invoiceRepository.search(status, scopedPatientId, appointmentId, pageable);
+        // open-in-view is disabled: initialize the response collections inside the transaction,
+        // batched by @BatchSize to avoid a per-invoice N+1 query.
+        invoices.forEach(invoice -> {
+            invoice.getItems().size();
+            invoice.getPayments().size();
+        });
+        return invoices;
     }
 
     @Transactional(readOnly = true)
@@ -117,7 +124,9 @@ public class InvoiceService {
         applyTotals(invoice);
         requirePositiveTotal(invoice);
 
-        return invoiceRepository.save(invoice);
+        invoice = invoiceRepository.save(invoice);
+        invoice.getPayments().size();
+        return invoice;
     }
 
     @Transactional
@@ -136,6 +145,7 @@ public class InvoiceService {
         invoice.setStatus(InvoiceStatus.CANCELLED);
         invoice.setCancelledAt(Instant.now());
         invoice = invoiceRepository.save(invoice);
+        invoice.getItems().size();
         eventPublisher.publishInvoiceCancelled(invoice);
         return invoice;
     }
@@ -169,6 +179,7 @@ public class InvoiceService {
         recomputePaymentStatus(invoice);
 
         invoice = invoiceRepository.save(invoice);
+        invoice.getItems().size();
         eventPublisher.publishPaymentConfirmed(invoice, payment);
         return invoice;
     }
@@ -184,6 +195,7 @@ public class InvoiceService {
 
         Invoice invoice = payment.getInvoice();
         invoice.getPayments().size();
+        invoice.getItems().size();
         payment.setStatus(PaymentStatus.REFUNDED);
         recomputePaymentStatus(invoice);
 

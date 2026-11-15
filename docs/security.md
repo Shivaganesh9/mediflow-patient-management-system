@@ -1,6 +1,6 @@
 # MediFlow Security
 
-*Status: reflects the implemented codebase (updated 2026-11-13, Milestone 3 - authentication & identity lifecycle).*
+*Status: reflects the implemented codebase (updated 2026-11-14, Milestone 4 - production readiness & reliability).*
 
 ## 1. Authentication model
 
@@ -148,15 +148,18 @@ Error mapping (fail closed): unknown identity or wrong role → 400; non-`ACTIVE
 
 Duplicate handling: `patients.patient_id` and `doctors.doctor_id` are `UNIQUE` and creation pre-checks the business id; a concurrent duplicate surfaces as a DB constraint violation mapped to 409, so one identity can never own two active profiles.
 
-Configuration: `services.auth-service-url` (`AUTH_SERVICE_URL`, default `http://localhost:8081`); connect timeout 1s, read timeout 3s. The dependency direction is patient → auth and doctor → auth only (no cycle). Seeded ids (`DevSeedData`) match the auth seed users, so existing seed workflows are unchanged.
+Configuration: `services.auth-service-url` (`AUTH_SERVICE_URL`, default `http://localhost:8081`); connect timeout 1s (`AUTH_SERVICE_CONNECT_TIMEOUT_MS`), read timeout 3s (`AUTH_SERVICE_READ_TIMEOUT_MS`); no automatic retries. A small circuit breaker (5 consecutive transport/5xx failures → open for 30s) fails fast with 503 instead of hammering a degraded auth-service; a well-formed 404/401/403 proves the dependency healthy and does **not** count as a failure. The caller's `X-Correlation-ID` is forwarded. The dependency direction is patient → auth and doctor → auth only (no cycle). Seeded ids (`DevSeedData`) match the auth seed users, so existing seed workflows are unchanged.
 
 **Remaining limitation:** validation happens at creation time. A later role change or deactivation in auth-service does not retroactively invalidate an existing profile, and there is no distributed transaction or cache between the services. Network-level restriction of `/internal/**` (mTLS/network policy) remains an infrastructure concern.
 
 ## 10. Other controls
 
 - **CORS:** the API gateway is the single CORS owner for browser traffic (default origin `http://localhost:3000`, env `CORS_ALLOWED_ORIGINS`, `Allow-Credentials: true`); it deduplicates CORS headers emitted by downstream services through a global `DedupeResponseHeader` filter so proxied responses carry exactly one `Access-Control-Allow-Origin`. Services keep their own CORS config for direct development access. CSRF disabled; stateless sessions.
-- **Input validation:** Bean Validation (`jakarta.validation`) on request DTOs; handled centrally (see `GlobalExceptionHandler`).
-- **Error contract:** `401` for authentication failures (generic), `403` for authorization/inactive accounts, `429` + `Retry-After` for lockout, `503` when the revocation store is unavailable and fail-closed.
+- **Input validation:** Bean Validation (`jakarta.validation`) on request DTOs; handled centrally (see `GlobalExceptionHandler`). Malformed JSON → 400, unsupported media type → 415, invalid path/query values → 400, optimistic-lock/integrity conflicts → 409, database/revocation/downstream outages → 503.
+- **Error contract:** `401` for authentication failures (generic), `403` for authorization/inactive accounts, `400`/`405`/`409`/`415` for client mistakes, `429` + `Retry-After` for lockout, `503` when the revocation store or a required dependency is unavailable and the service fails closed. Bodies never contain stack traces, SQL, credentials or PHI.
+- **Actuator exposure:** only `/actuator/health/**` and `/actuator/info` are public. `/actuator/prometheus` (and every other endpoint) requires authentication, and `management.endpoint.health.show-details` defaults to `never`, so health probes cannot be used to enumerate internals.
+- **Correlation:** `X-Correlation-ID` is validated (8–64 safe characters) or regenerated at the gateway, propagated via MDC and response headers, and carried on domain events. Logs are therefore traceable without logging request bodies or PHI.
+- **Authentication metrics:** failed authentications are counted as `mediflow.security.authentication.failures{reason=...}` for alerting, without recording usernames.
 - **SQL:** parameterized via Spring Data JPA; schema from Flyway migrations, `ddl-auto: validate`.
 - **Audit:** `auth_audit_events` (who/what/when/IP/user-agent/outcome, no secrets or passwords).
 

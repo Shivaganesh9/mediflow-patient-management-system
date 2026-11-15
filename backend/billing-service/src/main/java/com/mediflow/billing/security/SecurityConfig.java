@@ -43,7 +43,7 @@ public class SecurityConfig {
                         .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health", "/actuator/info", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/invoices").hasAnyRole(BILLING_WRITERS)
                         .requestMatchers(HttpMethod.PUT, "/api/v1/invoices/*").hasAnyRole(BILLING_WRITERS)
                         .requestMatchers(HttpMethod.POST, "/api/v1/invoices/*/payments").hasAnyRole(BILLING_WRITERS)

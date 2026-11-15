@@ -1,14 +1,15 @@
 # MediFlow REST API
 
-*Status: reflects the implemented codebase (2026-11-13, Milestone 3).*
+*Status: reflects the implemented codebase (2026-11-14, Milestone 4).*
 
 ## 1. Conventions
 
 - Base path: `/api/v1/{resource}`. JSON payloads. Versioned paths only (no headers-based versioning).
 - Response envelope (`common-library` `ApiResponse`): `{ success, message, data, errors, timestamp }`; `errors` omitted when null.
-- Pagination via Spring Data `Pageable`: params `page`, `size`, `sort`; default size 20 everywhere (patient/doctor sort `lastName`, appointment sort `startTime`, medical-record sort `encounterDate`, invoice sort `issuedAt`).
+- Pagination via Spring Data `Pageable`: params `page`, `size`, `sort`; default size 20 everywhere, capped at `MAX_PAGE_SIZE` (default 100). Default sorts: patient/doctor `lastName`, appointment `startTime`, medical-record `encounterDate`, invoice `issuedAt`.
 - All responses wrapped in `ApiResponse.success(...)`; create endpoints return HTTP 201.
-- Error mapping (`GlobalExceptionHandler`): `ResourceNotFoundException` → 404; `ConflictException` → 409; `IllegalArgumentException` → 400; `DateTimeParseException` → 400; `MethodArgumentNotValidException` / `ConstraintViolationException` → 400; `AuthenticationException` / `AuthenticationFailedException` → 401 (generic message); `InactiveAccountException` → 403 (non-active account, only after credentials verified); `TooManyRequestsException` → 429 + `Retry-After`; `AccessDeniedException` → 403; `DataIntegrityViolationException` → 409; `ServiceUnavailableException` (downstream dependency, e.g. auth-service unreachable) → 503; `RevocationUnavailableException` (shared revocation store unreachable, fail-closed) → 503.
+- Error mapping (`GlobalExceptionHandler`): `ResourceNotFoundException` / `NoResourceFoundException` → 404; `ConflictException` / `DataIntegrityViolationException` / `OptimisticLockingFailureException` → 409; `IllegalArgumentException` / `DateTimeParseException` / `MethodArgumentNotValidException` / `ConstraintViolationException` / `HandlerMethodValidationException` / `HttpMessageNotReadableException` (malformed JSON) / `MethodArgumentTypeMismatchException` / missing parameter or header → 400; unsupported media type → 415; unsupported HTTP method → 405; `AuthenticationException` / `AuthenticationFailedException` → 401 (generic message); `InactiveAccountException` → 403 (non-active account, only after credentials verified); `TooManyRequestsException` → 429 + `Retry-After`; `AccessDeniedException` → 403; `ServiceUnavailableException` (downstream dependency, e.g. auth-service unreachable) → 503; `RevocationUnavailableException` (shared revocation store unreachable, fail-closed) → 503; `DataAccessResourceFailureException` (database unavailable) → 503. Error bodies never include stack traces, SQL, credentials or PHI.
+- Correlation: clients may send `X-Correlation-ID` (8–64 characters of `[A-Za-z0-9._-]`); the gateway replaces anything else with a UUID and always echoes the id on the response. The same value appears in logs (`[correlationId:...]`) and on the domain events the request produces.
 
 ## 2. Auth Service (8081) — `/api/v1/auth`
 

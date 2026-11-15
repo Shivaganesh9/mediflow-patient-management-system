@@ -79,5 +79,25 @@
       <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
       <version>${springdoc.version}</version>
     </dependency>
+    <!-- Prometheus registry gives every service /actuator/prometheus metrics. -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    <!-- Actuator types are provided by each service; optional keeps the library lean. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+      <optional>true</optional>
+    </dependency>
+    <!--
+      Optional: only services that actually use Kafka get the Kafka health indicator.
+      Keeping it optional avoids pulling Kafka into auth-service (which has no broker dependency).
+    -->
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka</artifactId>
+      <optional>true</optional>
+    </dependency>
   </dependencies>
 </project>

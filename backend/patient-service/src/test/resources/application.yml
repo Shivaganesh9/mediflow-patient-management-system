@@ -25,3 +25,11 @@ eureka:
 security:
   revocation:
     enabled: false
+
+# Tests run without Redis/Kafka.
+management:
+  health:
+    redis:
+      enabled: false
+    kafka:
+      enabled: false

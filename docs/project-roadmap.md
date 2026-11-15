@@ -1,6 +1,6 @@
 # MediFlow Project Roadmap
 
-*Status: reflects the implemented codebase (2026-08-15).*
+*Status: reflects the implemented codebase (2026-11-14).*
 
 ## Status Summary
 
@@ -15,13 +15,15 @@ Implemented and green: auth, patient, doctor, appointment, medical-record, billi
 5. **Migrations + tests:** Flyway V1–V3 per service; unit + controller-security + integration tests (H2 / Testcontainers).
 6. **Containerization + CI:** `Dockerfile`/`.dockerignore` for all 9 runnable services (Temurin 21 JRE, `mediflow/<service>` images); Spring Boot `repackage` with an `exec` classifier produces executable `<service>-1.0.0-exec.jar`; GitHub Actions (`.github/workflows/ci.yml`) verifies backend tests, frontend build, and builds all 9 images.
 7. **Frontend integration:** API client with JWT access/refresh handling, AuthContext, role-based routing, and pages wired to the gateway for auth, patients, doctors, appointments, medical records, billing/invoices/payments, notifications, and analytics.
+8. **Production readiness & reliability (Milestone 4):** transactional outbox in appointment/billing/medical-record with a scheduled relay (at-least-once, bounded retry, `DEAD` state); consumer `ErrorHandlingDeserializer` + per-record ack + exponential retry/DLQ + metrics; end-to-end `X-Correlation-ID`; circuit breaker and bounded timeouts on patient/doctor → auth verification; extended 4xx/409/503 error contract; health/liveness/readiness probes with a Kafka indicator and authenticated Prometheus metrics on the backend services; graceful shutdown, Hikari pool bounds/leak detection, `open-in-view: false`, page-size cap, composite search indexes; non-root images with memory-aware JVM flags and hardened compose; documented Kafka/Redis/PostgreSQL recovery and outbox/DLQ replay.
 
 ## In Progress / Next
 
 1. **Consume more Kafka events** — optionally medical-record.updated.v1 → analytics; medical-record topics → notifications.
 2. **Cross-service identity validation** — resolve the admin-created patient/doctor profile limitation (see `docs/security.md`).
-3. **Observability & hardening** — rate limiting, structured logging/tracing, readiness probes, HTTPS, secrets management.
-4. **Production deployment** — Kubernetes/Terraform, backups, image registry/CD pipeline. (Service images and CI verification are delivered; see Completed item 6.)
+3. **Observability & hardening** — rate limiting, distributed tracing (Zipkin/OpenTelemetry), Prometheus/Grafana server + dashboards, HTTPS, secrets management. Health/readiness probes, correlation logging and metrics exposure are delivered (Completed item 8).
+4. **Production deployment** — Kubernetes/Terraform, backups automation, image registry/CD pipeline. (Service images, CI verification and compose hardening are delivered; see Completed items 6 and 8.)
+5. **Known data-layer gaps** — payment idempotency key, PostgreSQL exclusion constraint for appointment overlap races, outbox row archival.
 
 ## Future (deferred)
 

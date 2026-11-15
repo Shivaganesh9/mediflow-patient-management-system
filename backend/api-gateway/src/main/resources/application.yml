@@ -1,11 +1,21 @@
 ﻿server:
   port: ${SERVER_PORT:8080}
+  shutdown: graceful
 
 spring:
   application:
     name: api-gateway
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   cloud:
     gateway:
+      httpclient:
+        connect-timeout: ${GATEWAY_CONNECT_TIMEOUT_MS:2000}
+        response-timeout: ${GATEWAY_RESPONSE_TIMEOUT:10s}
+        pool:
+          max-connections: ${GATEWAY_POOL_MAX_CONNECTIONS:200}
+          max-idle-time: 30s
+          acquire-timeout: ${GATEWAY_POOL_ACQUIRE_TIMEOUT_MS:5000}
       server:
         webflux:
           default-filters:
@@ -110,6 +120,11 @@ management:
     web:
       exposure:
         include: health,info
+  endpoint:
+    health:
+      show-details: ${HEALTH_SHOW_DETAILS:never}
+      probes:
+        enabled: true
 
 springdoc:
   api-docs:
@@ -142,3 +157,7 @@ eureka:
   client:
     service-url:
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+
+logging:
+  pattern:
+    level: "%5p [correlationId:%X{correlationId:-}]"

@@ -2,6 +2,7 @@ package com.mediflow.notification.event;
 
 import com.mediflow.appointment.event.AppointmentEvent;
 import com.mediflow.billing.event.BillingEvent;
+import com.mediflow.common.logging.CorrelationContext;
 import com.mediflow.notification.mapper.NotificationDraft;
 import com.mediflow.notification.mapper.NotificationEventMapper;
 import com.mediflow.notification.service.NotificationService;
@@ -30,14 +31,26 @@ public class NotificationConsumer {
             TOPIC_APPOINTMENT_CREATED, TOPIC_APPOINTMENT_UPDATED, TOPIC_APPOINTMENT_CANCELLED
     })
     public void consumeAppointmentEvent(AppointmentEvent event) {
-        log.debug("Received appointment event {}", event == null ? "null" : event.getEventId());
-        dispatch(eventMapper.fromAppointmentEvent(event));
+        if (event == null) {
+            log.warn("Ignoring null appointment event");
+            return;
+        }
+        CorrelationContext.run(event.getCorrelationId(), () -> {
+            log.debug("Received appointment event {}", event.getEventId());
+            dispatch(eventMapper.fromAppointmentEvent(event));
+        });
     }
 
     @KafkaListener(topics = {TOPIC_INVOICE_GENERATED, TOPIC_PAYMENT_CONFIRMED})
     public void consumeBillingEvent(BillingEvent event) {
-        log.debug("Received billing event {}", event == null ? "null" : event.getEventId());
-        dispatch(eventMapper.fromBillingEvent(event));
+        if (event == null) {
+            log.warn("Ignoring null billing event");
+            return;
+        }
+        CorrelationContext.run(event.getCorrelationId(), () -> {
+            log.debug("Received billing event {}", event.getEventId());
+            dispatch(eventMapper.fromBillingEvent(event));
+        });
     }
 
     private void dispatch(Optional<NotificationDraft> draft) {

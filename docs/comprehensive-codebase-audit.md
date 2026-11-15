@@ -351,3 +351,25 @@ MediFlow has a sensible domain direction and a useful initial service decomposit
 - Maven Wrapper not added (CI uses runner-provided Maven).
 - `docker-compose.yml` still runs only PostgreSQL + Kafka; application containers are run individually.
 - Kubernetes/Terraform, image registry/CD deployment, monitoring stack, rate limiting, and a production frontend static image.
+
+---
+
+## Post-Audit Reconciliation (2026-11-14) — Milestone 4
+
+> Production readiness & reliability. Supersedes the "still outstanding" items below where noted.
+
+### Resolved since 2026-08-15
+- **Producer reliability:** transactional outbox in appointment/billing/medical-record (event JSON + `eventId` written in the business transaction; scheduled `OutboxRelay` publishes with broker ack, `PESSIMISTIC_WRITE` row locks, oldest-first with stop-on-failure, exponential back-off 1s→60s, bounded attempts then `DEAD`). At-least-once; consumers dedupe on `eventId`. Removes the dual-write event-loss window.
+- **Consumer reliability:** `ErrorHandlingDeserializer`, `enable-auto-commit: false` + `ack-mode: record`, bounded exponential retry (5 attempts, 1s→20s), non-retryable deserialization errors, DLQ `dlq.<topic>` with `failIfSendResultIsError=true`, and retry/DLQ Micrometer counters.
+- **Observability:** `/actuator/health` + liveness/readiness groups (readiness limited to `readinessState` + `db`), Kafka health indicator where Kafka is used, Prometheus registry with authenticated `/actuator/prometheus` on the eight common-library services (gateway: health/info only), plus outbox/consumer/authentication metrics.
+- **Tracing/correlation:** end-to-end `X-Correlation-ID` (gateway validation/regeneration, MDC, response header, event envelope, consumer MDC, downstream auth calls). This is correlation, not distributed tracing.
+- **Resilience & error contract:** circuit breaker + bounded timeouts on patient/doctor → auth identity verification (503 fail-fast); `GlobalExceptionHandler` now maps malformed JSON/media type/method/param errors to 400/415/405, conflicts to 409, and DB/revocation/downstream outages to 503.
+- **Data/deployment hardening:** Hikari pool bounds + leak detection, `open-in-view: false`, page-size cap, Hibernate batching, composite search indexes, graceful shutdown, non-root images (UID 10001) with memory-aware JVM flags, Kafka healthcheck/auto-topic-creation in compose, `restart: unless-stopped`.
+- **Recovery docs:** Kafka/Redis/PostgreSQL recovery and outbox/DLQ replay procedures in `docs/runbook.md` §15–16.
+
+### Still outstanding (unchanged)
+- Analytics still does not consume `medical-record.updated.v1`.
+- Distributed tracing (Zipkin/OpenTelemetry) and a Prometheus/Grafana server + dashboards are not deployed (services only expose metrics).
+- No service registry/config server; no Kubernetes/Terraform or CD deployment; no rate limiting.
+- Payment recording still lacks a client-supplied idempotency key; appointment overlap has no PostgreSQL exclusion constraint (concurrent-create race remains).
+- Outbox `PUBLISHED` rows are not archived automatically.

@@ -1,6 +1,6 @@
 # MediFlow Deployment
 
-*Status: reflects the implemented codebase (2026-08-15).*
+*Status: reflects the implemented codebase (2026-11-14).*
 
 ## Local Development
 
@@ -39,7 +39,7 @@ Service URLs are overridable via env vars (`AUTH_SERVICE_URL`, ...) in the gatew
 
 ## Container Images
 
-Every runnable service has a `Dockerfile` (Eclipse Temurin 21 JRE) and a `.dockerignore`; the `lab-service`/`pharmacy-service` scaffolds remain uncontainerized. Build one or all:
+Every runnable service has a `Dockerfile` (Eclipse Temurin 21 JRE) and a `.dockerignore`; the `lab-service`/`pharmacy-service` scaffolds remain uncontainerized. Images run as a non-root user (UID/GID `10001`) and start the JVM with `-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -Duser.timezone=Asia/Kolkata`. Build one or all:
 
 ```bash
 mvn -DskipTests package
@@ -68,10 +68,22 @@ Notes:
 
 - Required: `JWT_SECRET`, `DB_PASSWORD`. Optional: `DB_URL`, `DB_USERNAME`, `KAFKA_BOOTSTRAP_SERVERS`, `EUREKA_URL`, `CORS_ALLOWED_ORIGINS`, `JWT_EXPIRATION`, `JWT_REFRESH_EXPIRATION`, per-service URLs, `SERVER_PORT`.
 - `ddl-auto: validate` everywhere; schemas come from Flyway migrations.
+- **Pool/query tuning** (all services): `DB_POOL_MAX_SIZE` (10), `DB_POOL_MIN_IDLE` (2), `DB_POOL_CONNECTION_TIMEOUT_MS` (3000), `DB_LEAK_DETECTION_MS` (20000), `JPA_SHOW_SQL` (false), `MAX_PAGE_SIZE` (100).
+- **Kafka bounds:** `KAFKA_DELIVERY_TIMEOUT_MS` (20000), `KAFKA_REQUEST_TIMEOUT_MS` (10000), `KAFKA_MAX_BLOCK_MS` (5000), `KAFKA_MAX_POLL_RECORDS` (100), `KAFKA_CONSUMER_CONCURRENCY` (1).
+- **Outbox relay** (appointment/billing/medical-record): `OUTBOX_PUBLISHER_ENABLED` (true), `OUTBOX_PUBLISHER_INTERVAL_MS` (1000), `OUTBOX_PUBLISHER_INITIAL_DELAY_MS` (5000), `OUTBOX_PUBLISHER_BATCH_SIZE` (20), `OUTBOX_PUBLISHER_MAX_ATTEMPTS` (10), `OUTBOX_PUBLISHER_SEND_TIMEOUT_MS` (5000). Do not disable it in a running environment — events would never leave the outbox.
+- **Gateway HTTP client:** `GATEWAY_CONNECT_TIMEOUT_MS` (2000), `GATEWAY_RESPONSE_TIMEOUT` (10s), `GATEWAY_POOL_MAX_CONNECTIONS` (200), `GATEWAY_POOL_ACQUIRE_TIMEOUT_MS` (5000).
+- **Health:** `HEALTH_SHOW_DETAILS` (`never`; use `when-authorized`/`always` for local debugging only). All values are documented in `.env.example`.
+
+## Health, Metrics and Shutdown
+
+- `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` are public. Readiness includes only `readinessState` and `db`, so Kafka/Redis outages do not remove instances from rotation. Point container/Kubernetes liveness at `.../liveness` and readiness at `.../readiness`.
+- `/actuator/prometheus` is exposed by the eight backend services but **authenticated** there (only health/info are public). The api-gateway has no edge security layer and therefore exposes only `health`/`info` — scrape metrics from the services directly with a bearer token.
+- Metrics are tagged `application=<spring.application.name>`. Outbox, consumer retry/DLQ and authentication-failure counters are documented in `docs/runbook.md` §15.
+- Services shut down gracefully (`server.shutdown: graceful`, 30s phase timeout). Compose sets `stop_grace_period: 30s` and `restart: unless-stopped` for Postgres/Kafka/Redis; Kafka also has a broker API healthcheck.
 
 ## CI/CD
 - GitHub Actions (`.github/workflows/ci.yml`) runs on every push/PR: `mvn -B -ntp verify` (backend tests incl. Testcontainers), frontend `npm ci` + `npm run build`, and a 9-service matrix that packages each service and builds its Docker image (`mediflow/<service>:ci`).
 - No deployment pipeline yet; images are built and verified but not published.
 
 ## Not Yet Delivered
-- Kubernetes/container orchestration, Terraform, Prometheus/Grafana, backups/DR, HTTPS/TLS termination, rate limiting, centralized logging/tracing, image registry/CD pipeline.
+- Kubernetes/container orchestration, Terraform, Prometheus/Grafana **server** + dashboards (services already expose Prometheus metrics), distributed tracing (Zipkin/OpenTelemetry), backups/DR automation, HTTPS/TLS termination, rate limiting, centralized log aggregation, image registry/CD pipeline.

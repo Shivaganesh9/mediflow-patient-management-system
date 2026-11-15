@@ -28,3 +28,15 @@ eureka:
 security:
   revocation:
     enabled: false
+
+# Tests run without Redis/Kafka and without the outbox relay (no broker available).
+management:
+  health:
+    redis:
+      enabled: false
+    kafka:
+      enabled: false
+
+outbox:
+  publisher:
+    enabled: false

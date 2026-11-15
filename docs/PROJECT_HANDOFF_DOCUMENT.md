@@ -294,7 +294,7 @@ List every required environment variable with a description. Mask secrets.
   - Registration creates a user, hashes the password, assigns a default PATIENT role if none is provided, and issues tokens.
   - Login authenticates with username or email and rotates refresh tokens.
   - Refresh token rotation invalidates the previous token and issues a new one.
-  - Logout removes all refresh tokens for the user.
+  - Logout revokes the caller's refresh-token family (session) and blacklists the presented access token; other sessions of the same user stay valid.
 - Patient logic:
   - Patient creation and update map request data into the entity and save it.
   - Dates are parsed from string input and stored as LocalDate.
@@ -313,7 +313,7 @@ List every required environment variable with a description. Mask secrets.
 - Background jobs:
   - None are implemented yet.
 
-## 11. Current TODOs
+## 11. Current TODOs (historical — superseded by §13 "What changed")
 - Implement real doctor-service domain logic and API endpoints.
 - Implement billing-service domain and invoice logic.
 - Implement analytics-service reporting and metrics.
@@ -323,7 +323,7 @@ List every required environment variable with a description. Mask secrets.
 - Add frontend pages and API integration.
 - Add tests and integration coverage.
 - Add Kubernetes/registry/CD deployment orchestration (service images and CI verification are in place).
-- Add logging, monitoring, and observability.
+- ~~Add logging, monitoring, and observability.~~ Delivered in Milestone 4: correlation ids, health/liveness/readiness probes, Kafka health indicator, authenticated Prometheus metrics on the backend services (no tracing or alerting stack yet).
 - Add rate limiting, secrets handling, and security hardening.
 
 ## 12. Current Bugs
@@ -368,7 +368,7 @@ List every required environment variable with a description. Mask secrets.
 - Error handling:
   - Use shared ApiResponse and GlobalExceptionHandler.
 - Logging:
-  - Not yet standardized across services.
+  - SLF4J + Logback per service; every line carries `[correlationId:...]` (Milestone 4). No centralized log aggregation.
 - Comments:
   - Minimal comments; code should be self-explanatory.
 - Testing style:
@@ -506,6 +506,20 @@ Continue building the MediFlow Patient Management System from the current scaffo
 - **CI:** added `.github/workflows/ci.yml` — backend `mvn -B -ntp verify`, frontend `npm ci` + `npm run build`, and a 9-service matrix that packages each service and builds its Docker image (`mediflow/<service>:ci`). `tsconfig.tsbuildinfo` added to `.gitignore` (frontend build artifact).
 - **Verified locally:** full `mvn verify` green, frontend production build succeeded, and all 9 Docker images built and spot-checked (executable `app.jar` present).
 - **Not changed:** business logic, tests, Kafka payloads/consumers, Flyway migrations, security rules, gateway routes, or `docker-compose.yml` (still infra-only). No commit/push performed.
+
+### Update (2026-11-14) — Milestone 4: production readiness & reliability
+
+- **Transactional outbox** in appointment-service (`V4__add_outbox_events.sql`), billing-service (`V4`) and medical-record-service (`V3`): publishers write the event JSON + `eventId` in the business transaction; a scheduled `OutboxRelay` publishes oldest-first with broker ack, `PESSIMISTIC_WRITE` row locking, exponential back-off (1s→60s), and a bounded attempt budget after which the row is `DEAD` (never dropped). At-least-once delivery; consumers deduplicate on `eventId`. Public publisher method signatures are unchanged so existing tests keep working.
+- **Consumer hardening** (notification/analytics): `ErrorHandlingDeserializer`, `enable-auto-commit: false` + `ack-mode: record`, `ExponentialBackOffWithMaxRetries(5)` (1s→20s), non-retryable deserialization errors, DLQ `dlq.<topic>` with `failIfSendResultIsError=true`, and retry/DLQ Micrometer counters. Consumers restore the event correlation id into the MDC.
+- **Correlation IDs:** new `CorrelationIdGatewayFilter` (gateway) and `CorrelationContext`/`CorrelationIdFilter` (common-library); `X-Correlation-ID` is validated/regenerated, propagated to MDC, responses, downstream calls (patient/doctor → auth), and event envelopes; log pattern includes `[correlationId:...]`.
+- **Synchronous resilience:** patient/doctor `AuthServiceIdentityVerifier` gained configurable connect/read timeouts, no retries, a new dependency-free `CircuitBreaker` (5 failures → 30s open), correlation forwarding, and circuit-breaker tests.
+- **Error contract:** `GlobalExceptionHandler` extended with 4xx mappings (malformed JSON, media type, method, missing params, type mismatch, unknown resource), 409 for optimistic-lock/integrity conflicts, 503 for DB/revocation/downstream outages, and an authentication-failure counter.
+- **Observability/deployment:** Prometheus registry in common-library; the eight backend services expose `/actuator/prometheus` (still authenticated) and health probes (`readinessState` + `db` only; the gateway exposes health/info only); `KafkaHealthIndicator` where Kafka is used; graceful shutdown; Hikari pool bounds + leak detection; `open-in-view: false`; page-size cap; Hibernate batching; composite search indexes; 9 Dockerfiles run as non-root UID 10001 with memory-aware JVM flags; compose gained a Kafka healthcheck, `restart: unless-stopped`, `stop_grace_period`, auto-topic creation; `.env.example` documents all new tuning variables.
+- **Billing lazy-loading fixes:** `@BatchSize(50)` on `Invoice.items`/`payments` and in-transaction collection initialization in `searchInvoices`/`updateInvoice`/`cancelInvoice`/`recordPayment`/`refundPayment`, required because `open-in-view` is now disabled.
+- **New tests:** `OutboxRelayTest` (publish, ordered stop-on-failure, DEAD after budget, corrupt payload), `OutboxEventRepositoryTest` (due-only locked selection), appointment malformed-JSON/invalid-UUID/health/readiness/metrics-auth integration tests, and circuit-breaker tests in both identity verifiers.
+- **Docs:** `docs/kafka-events.md` (outbox, retry/DLQ, correlation), `docs/runbook.md` (health/metrics, Kafka/Redis/PostgreSQL recovery, outbox/DLQ replay), `docs/architecture.md`, `docs/deployment.md`, `docs/database-design.md`, `docs/security.md`, `docs/features.md`. Logout wording corrected to "current session + presented access token".
+- **Deferred (documented):** Zipkin/OpenTelemetry tracing, Prometheus/Grafana server + dashboards, payment idempotency-key API, PostgreSQL exclusion constraint for appointment range races, outbox row archival, rate limiting.
+- **Not changed:** ports, DB topology, public APIs, role permissions, existing business logic. No commit/push performed.
 
 ### Accurate references
 For current, code-verified documentation see `docs/architecture.md`, `docs/security.md`, `docs/api-design.md`, `docs/database-design.md`, `docs/kafka-events.md`, `docs/microservices.md`, `docs/features.md`.

@@ -1,13 +1,24 @@
 package com.mediflow.medicalrecord.event;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mediflow.common.logging.CorrelationContext;
 import com.mediflow.medicalrecord.entity.MedicalRecord;
+import com.mediflow.medicalrecord.event.outbox.OutboxEvent;
+import com.mediflow.medicalrecord.event.outbox.OutboxEventRepository;
+import com.mediflow.medicalrecord.event.outbox.OutboxStatus;
 import lombok.RequiredArgsConstructor;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * Builds medical-record domain events and stores them in the transactional outbox.
+ *
+ * <p>Publishing to Kafka is deferred to {@code OutboxRelay} so the record write and the event are
+ * atomic. Event payloads can contain clinical text; they are stored durably but never logged.</p>
+ */
 @Component
 @RequiredArgsConstructor
 public class MedicalRecordEventPublisher {
@@ -19,7 +30,8 @@ public class MedicalRecordEventPublisher {
     private static final String EVENT_TYPE_MEDICAL_RECORD_CREATED = "MEDICAL_RECORD_CREATED";
     private static final String EVENT_TYPE_MEDICAL_RECORD_UPDATED = "MEDICAL_RECORD_UPDATED";
 
-    private final KafkaTemplate<String, MedicalRecordEvent> kafkaTemplate;
+    private final OutboxEventRepository outboxRepository;
+    private final ObjectMapper objectMapper;
 
     public void publishMedicalRecordCreated(MedicalRecord medicalRecord) {
         publish(TOPIC_MEDICAL_RECORD_CREATED, EVENT_TYPE_MEDICAL_RECORD_CREATED, medicalRecord);
@@ -50,10 +62,33 @@ public class MedicalRecordEventPublisher {
                 .eventType(eventType)
                 .occurredAt(Instant.now())
                 .producerService(PRODUCER_SERVICE)
+                .correlationId(CorrelationContext.currentUuid())
                 .aggregateId(medicalRecord.getRecordId())
                 .payload(payload)
                 .build();
 
-        kafkaTemplate.send(topic, medicalRecord.getRecordId().toString(), event);
+        enqueue(topic, event);
+    }
+
+    private void enqueue(String topic, MedicalRecordEvent event) {
+        OutboxEvent outboxEvent = new OutboxEvent();
+        outboxEvent.setEventId(event.getEventId());
+        outboxEvent.setAggregateId(event.getAggregateId());
+        outboxEvent.setTopic(topic);
+        outboxEvent.setEventType(event.getEventType());
+        outboxEvent.setEventClass(event.getClass().getName());
+        outboxEvent.setPayload(serialize(event));
+        outboxEvent.setStatus(OutboxStatus.PENDING);
+        outboxEvent.setAttempts(0);
+        outboxEvent.setNextAttemptAt(Instant.now());
+        outboxRepository.save(outboxEvent);
+    }
+
+    private String serialize(MedicalRecordEvent event) {
+        try {
+            return objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize medical record event", ex);
+        }
     }
 }

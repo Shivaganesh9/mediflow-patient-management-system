@@ -2,12 +2,15 @@ package com.mediflow.analytics.event;
 
 import com.mediflow.appointment.event.AppointmentEvent;
 import com.mediflow.billing.event.BillingEvent;
+import com.mediflow.common.logging.CorrelationContext;
 import com.mediflow.medicalrecord.event.MedicalRecordEvent;
 import com.mediflow.analytics.service.AnalyticsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
+
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -29,8 +32,10 @@ public class AnalyticsConsumer {
             TOPIC_APPOINTMENT_CREATED, TOPIC_APPOINTMENT_UPDATED, TOPIC_APPOINTMENT_CANCELLED
     })
     public void consumeAppointmentEvent(AppointmentEvent event) {
-        log.debug("Received appointment event {}", event == null ? "null" : event.getEventId());
-        analyticsService.processAppointmentEvent(event);
+        CorrelationContext.run(correlationIdOf(event), () -> {
+            logReceived("appointment", event == null ? null : event.getEventId());
+            analyticsService.processAppointmentEvent(event);
+        });
     }
 
     @KafkaListener(topics = {
@@ -38,13 +43,37 @@ public class AnalyticsConsumer {
             TOPIC_PAYMENT_CONFIRMED, TOPIC_PAYMENT_REFUNDED
     })
     public void consumeBillingEvent(BillingEvent event) {
-        log.debug("Received billing event {}", event == null ? "null" : event.getEventId());
-        analyticsService.processBillingEvent(event);
+        CorrelationContext.run(correlationIdOf(event), () -> {
+            logReceived("billing", event == null ? null : event.getEventId());
+            analyticsService.processBillingEvent(event);
+        });
     }
 
     @KafkaListener(topics = {TOPIC_MEDICAL_RECORD_CREATED})
     public void consumeMedicalRecordEvent(MedicalRecordEvent event) {
-        log.debug("Received medical record event {}", event == null ? "null" : event.getEventId());
-        analyticsService.processMedicalRecordEvent(event);
+        CorrelationContext.run(correlationIdOf(event), () -> {
+            logReceived("medical record", event == null ? null : event.getEventId());
+            analyticsService.processMedicalRecordEvent(event);
+        });
+    }
+
+    private UUID correlationIdOf(AppointmentEvent event) {
+        return event == null ? null : event.getCorrelationId();
+    }
+
+    private UUID correlationIdOf(BillingEvent event) {
+        return event == null ? null : event.getCorrelationId();
+    }
+
+    private UUID correlationIdOf(MedicalRecordEvent event) {
+        return event == null ? null : event.getCorrelationId();
+    }
+
+    private void logReceived(String kind, UUID eventId) {
+        if (eventId == null) {
+            log.warn("Received {} event without an event id", kind);
+        } else {
+            log.debug("Received {} event {}", kind, eventId);
+        }
     }
 }

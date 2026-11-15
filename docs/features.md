@@ -1,6 +1,6 @@
 # MediFlow Implemented Features
 
-*Status: reflects the implemented codebase (2026-08-15). This is a feature inventory of what is actually delivered, not a roadmap.*
+*Status: reflects the implemented codebase (2026-11-14). This is a feature inventory of what is actually delivered, not a roadmap.*
 
 ## Backend (implemented)
 
@@ -8,7 +8,7 @@
 - User registration (username, email, password, optional role; defaults to PATIENT).
 - Login by username or email with BCrypt verification.
 - JWT access token (HS256, `sub`/`uid`/`roles`) + rotating refresh tokens stored in DB.
-- Logout revokes all refresh tokens; `/me` returns the current user profile.
+- Logout revokes the caller's session (refresh-token family) and blacklists the presented access token; other sessions of the same user stay valid; `/me` returns the current user profile.
 
 ### Patient Management
 - Create, search (paginated), get, update, soft-delete patient profiles.
@@ -43,6 +43,15 @@
 ### Notifications & Analytics
 - Notification records materialized from Kafka appointment/billing events (idempotent, retry + DLQ); paginated list + unread count, mark-read.
 - Analytics read model materialized from Kafka appointment/billing/medical-record events (idempotent, retry + DLQ); dashboard summary, appointment stats, revenue, doctor ranking, and patient-activity endpoints (ADMIN/DOCTOR only).
+
+### Production Readiness & Reliability
+- **Transactional outbox** in appointment/billing/medical-record: events commit atomically with the business write; a scheduled relay publishes with broker ack, bounded exponential retries and a `DEAD` state for operator replay (no lost events during a Kafka outage).
+- **Consumer hardening**: `ErrorHandlingDeserializer`, per-record manual ack, 5 bounded exponential retries (1s→20s), non-retryable malformed payloads, DLQ `dlq.<topic>` with fail-if-send-error, retry/DLQ metrics.
+- **Correlation IDs** end-to-end: gateway `X-Correlation-ID` → MDC → log lines → event `correlationId` → consumer MDC; correlation id returned on responses.
+- **Resilient synchronous calls**: patient/doctor identity verification has short connect/read timeouts, no retries, a 5-failure/30s circuit breaker, and fails closed with 503.
+- **Error contract**: client errors → 400/405/415, concurrency/integrity conflicts → 409, database/revocation/downstream outages → 503, always as `ApiResponse` without leaking internals; authentication failures are metered.
+- **Observability**: `/actuator/health` with liveness/readiness probes (readiness = app state + DB), Kafka health indicator where Kafka is used, authenticated `/actuator/prometheus` on the eight backend services (the gateway exposes health/info only), outbox/consumer/auth metrics tagged by service and topic.
+- **Deployment hardening**: graceful shutdown (30s), Hikari pool bounds + leak detection, `open-in-view: false`, capped page size, Hibernate batching, composite search indexes, non-root container images with memory-aware JVM flags, Kafka broker healthcheck, `restart: unless-stopped`, and documented Kafka/Redis/PostgreSQL recovery procedures (`docs/runbook.md`).
 
 ## Frontend (implemented)
 - Vite + React 18 + TypeScript strict + react-router-dom 6.
