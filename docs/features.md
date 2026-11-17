@@ -23,7 +23,9 @@
 ### Appointment Management
 - Book, search (status/patient/doctor/time range), reschedule, and cancel appointments.
 - Validation: end after start; no overlapping appointment for the patient or doctor.
-- Status lifecycle with mutable-state guard (SCHEDULED/CONFIRMED can be rescheduled/cancelled).
+- **Database-enforced double-booking protection**: PostgreSQL exclusion constraints `ex_appointments_doctor_slot` and `ex_appointments_patient_slot` (GiST + `tsrange`, `btree_gist`) on `(doctor_id, [start_time, end_time))` and `(patient_id, ...)` for active statuses. Concurrent bookings cannot both commit - the loser gets HTTP 409 instead of a duplicate appointment.
+- Reserving statuses: SCHEDULED/CONFIRMED/IN_PROGRESS hold the slot; CANCELLED/COMPLETED/NO_SHOW release it. Half-open ranges allow back-to-back appointments.
+- Status lifecycle with mutable-state guard (SCHEDULED/CONFIRMED can be rescheduled/cancelled; any other status → 409).
 - Authorization (service-layer, per `docs/security.md`): PATIENT scoped to own `patientId`, DOCTOR to own `doctorId`, staff (ADMIN/NURSE/BILLING_STAFF/SUPPORT) broad.
 - Publishes `appointment.*.v1` events.
 
@@ -32,19 +34,23 @@
 - Record types (CONSULTATION, FOLLOW_UP, DIAGNOSIS, LAB_REPORT, PROCEDURE, OTHER).
 - Fine-grained access: doctors write/read only their own records; patients read only their own; admin full.
 - Publishes `medical-record.*.v1` events.
+- **Deliberate limitation:** an appointment may have more than one medical record (e.g. consultation plus a later lab report), so no uniqueness constraint is applied there. Appointment and invoice are the billing-critical one-to-one edges and are constrained.
 
 ### Billing
 - Invoice generation with line items, tax, discount, and computed totals; unique `INV-yyyymmdd-XXXX` numbers.
-- Edit invoices while PENDING; cancel (only PENDING with no payments).
+- Edit invoices while PENDING; cancel (only PENDING with no payments); state conflicts return 409.
+- One active invoice per appointment (partial unique index `uq_invoices_active_appointment`), so a visit cannot be billed twice; cancelled invoices still allow a replacement.
 - Record payments (capped at remaining balance) with automatic PAID/PARTIALLY_PAID recompute; refund completed payments.
+- **Payment idempotency**: optional `Idempotency-Key` header; the claim commits in the same transaction as the payment and outbox event. Same key + same payload replays the original result (`Idempotent-Replay: true`), same key + different payload is 409, concurrent duplicates create one payment, and a failed request leaves no claim. Keys are caller-scoped and pruned after a configurable retention window.
 - Read authorization: a PATIENT can only list/view/pay-inspect their own invoices (a forced foreign `patientId` on the list returns 403); staff read any.
-- Publishes `invoice.*.v1` and `payment.*.v1` events.
+- Publishes `invoice.*.v1` and `payment.*.v1` events (a replay publishes nothing new).
 
 ### Notifications & Analytics
 - Notification records materialized from Kafka appointment/billing events (idempotent, retry + DLQ); paginated list + unread count, mark-read.
 - Analytics read model materialized from Kafka appointment/billing/medical-record events (idempotent, retry + DLQ); dashboard summary, appointment stats, revenue, doctor ranking, and patient-activity endpoints (ADMIN/DOCTOR only).
 
 ### Production Readiness & Reliability
+- **Business transaction integrity**: DB-enforced appointment slot exclusion, one active invoice per appointment, and idempotent payment recording (see the domain sections above), each proven with real PostgreSQL concurrency tests.
 - **Transactional outbox** in appointment/billing/medical-record: events commit atomically with the business write; a scheduled relay publishes with broker ack, bounded exponential retries and a `DEAD` state for operator replay (no lost events during a Kafka outage).
 - **Consumer hardening**: `ErrorHandlingDeserializer`, per-record manual ack, 5 bounded exponential retries (1s→20s), non-retryable malformed payloads, DLQ `dlq.<topic>` with fail-if-send-error, retry/DLQ metrics.
 - **Correlation IDs** end-to-end: gateway `X-Correlation-ID` → MDC → log lines → event `correlationId` → consumer MDC; correlation id returned on responses.
@@ -59,6 +65,7 @@
 - Role-based routing and navigation (PATIENT/DOCTOR/NURSE/ADMIN/BILLING_STAFF/SUPPORT).
 - Pages wired to `/api/v1/**` through the gateway: dashboard (role-aware), patients + detail, doctors + detail (availability/leaves), appointments (create/reschedule/cancel), medical records (create/edit), billing + invoice detail (pay/refund/cancel), notifications (inbox, unread count, mark-read), analytics (ADMIN/DOCTOR) with CSS charts.
 - Shared UI: loading/error/empty states, pagination, modals, status pills. API client in `src/api/`, typed DTOs in `src/types/`, auth in `src/context/AuthContext.tsx`.
+- Payment retries reuse one `Idempotency-Key` per payment intent (a field change starts a new intent), and appointment conflicts show an actionable "choose a different time slot" message from the 409 response.
 - Base URL `VITE_API_BASE_URL ?? http://localhost:8080`; dev server port 3000.
 
 ## Delivery & CI

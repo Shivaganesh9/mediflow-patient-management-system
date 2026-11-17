@@ -69,7 +69,7 @@ Each service follows `controller → service → repository → entity`, plus `d
 
 - Analytics service's `medical-record.updated.v1` topic is not consumed (only the created topic).
 - Admin/staff-created patient and doctor profiles accept an explicit Auth user UUID without a synchronous check that the user exists (see `docs/security.md`).
-- Appointment range exclusion is enforced in application code only: two concurrent creates can still race past the overlap check (no PostgreSQL exclusion constraint yet).
-- Payment recording has no client-supplied idempotency key; a retried POST can double-record (the event side is idempotent, the write side is not).
+- Appointment slot exclusion and payment idempotency are enforced by the database in the producers (PostgreSQL exclusion constraint, `payment_idempotency` claim table). Limits: idempotency keys are remembered for a configurable retention window (default 7 days) and only suppress duplicate *internal* payment records — they are not an external payment-provider integration. Doctor availability/leave windows are not yet enforced at booking time.
+- Multiple medical records may exist for one appointment (different record types); no uniqueness constraint is applied there. Invoice-per-appointment **is** constrained (partial unique index).
 - No service registry, config server, rate limiting, distributed tracing or metrics/tracing stack implemented; outbox `PUBLISHED` rows are not archived automatically.
 - The frontend Dockerfile runs the Vite dev server, not a production static build.

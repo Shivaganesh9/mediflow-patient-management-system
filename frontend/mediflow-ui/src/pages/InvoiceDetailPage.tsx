@@ -228,15 +228,25 @@ function PaymentModal({
   onSaved: () => void;
 }) {
   const [form, setForm] = useState<RecordPaymentRequest>({ amount: remaining, method: 'CARD' });
+  // One key per payment intent. A retry of the same payload reuses it (so the server replays the
+  // original result), while editing any field starts a new intent with a fresh key, because the
+  // backend rejects key reuse with a different payload (409).
+  const [idempotencyKey, setIdempotencyKey] = useState<string>(newPaymentKey);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const updateForm = (patch: Partial<RecordPaymentRequest>) => {
+    setForm((f) => ({ ...f, ...patch }));
+    setIdempotencyKey(newPaymentKey());
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      await billingApi.invoices.recordPayment(invoiceId, form);
+      await billingApi.invoices.recordPayment(invoiceId, form, idempotencyKey);
       onSaved();
     } catch (err) {
       if (err instanceof ApiError) setError(err.message);
@@ -258,7 +268,7 @@ function PaymentModal({
             step="0.01"
             required
             value={form.amount}
-            onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))}
+            onChange={(e) => updateForm({ amount: Number(e.target.value) })}
           />
           <small>
             {formatCurrency(remaining, currency)} remaining
@@ -266,7 +276,7 @@ function PaymentModal({
         </label>
         <label className="field">
           <span>Method *</span>
-          <select value={form.method} onChange={(e) => setForm((f) => ({ ...f, method: e.target.value as PaymentMethod }))}>
+          <select value={form.method} onChange={(e) => updateForm({ method: e.target.value as PaymentMethod })}>
             {PAYMENT_METHODS.map((m) => (
               <option key={m} value={m}>
                 {m.replace(/_/g, ' ')}
@@ -278,7 +288,7 @@ function PaymentModal({
           <span>Reference</span>
           <input
             value={form.reference ?? ''}
-            onChange={(e) => setForm((f) => ({ ...f, reference: e.target.value }))}
+            onChange={(e) => updateForm({ reference: e.target.value })}
           />
         </label>
         {error ? <p className="form-error">{error}</p> : null}
@@ -293,4 +303,16 @@ function PaymentModal({
       </form>
     </Modal>
   );
+}
+
+/**
+ * Generates an idempotency key accepted by the billing service
+ * ([A-Za-z0-9._:-]{8,80}). `crypto.randomUUID` needs a secure context, so a
+ * timestamp/random fallback covers plain-HTTP dev hosts.
+ */
+function newPaymentKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `pay-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }

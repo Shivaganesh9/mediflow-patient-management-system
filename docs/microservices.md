@@ -9,9 +9,9 @@
 | api-gateway | 8080 | Entry point; routes `/api/v1/**` by path to services; global CORS | Spring Cloud Gateway; no auth filtering at the edge |
 | auth-service | 8081 | Identity + tokens | register/login/refresh/logout/me; BCrypt; JWT access + rotating refresh tokens; users/roles/user_roles/refresh_tokens |
 | patient-service | 8083 | Patient profiles | CRUD + search; soft delete; ownership enforcement (PATIENT only own profile); 409 on recreating soft-deleted profile |
-| appointment-service | 8084 | Scheduling | CRUD + cancel; time-range + overlap validation; status lifecycle (SCHEDULED/CONFIRMED → reschedulable); publishes appointment events |
+| appointment-service | 8084 | Scheduling | CRUD + cancel; time-range validation; DB-enforced slot exclusion (PostgreSQL exclusion constraint, 409 on concurrent overlap); status lifecycle (SCHEDULED/CONFIRMED → reschedulable); publishes appointment events |
 | doctor-service | 8085 | Provider management | Doctor profiles + search; availability slots + leaves; ownership enforcement (DOCTOR only own profile) |
-| billing-service | 8087 | Invoicing + payments | Invoice generation (items, tax, discount, totals), edit (PENDING only), cancel, record payment, refund; publishes invoice/payment events |
+| billing-service | 8087 | Invoicing + payments | Invoice generation (items, tax, discount, totals), edit (PENDING only), cancel, record payment (optional `Idempotency-Key`, DB-enforced replay/409), refund; one active invoice per appointment; publishes invoice/payment events |
 | analytics-service | 8088 | Reporting | Event-driven analytics read model (appointment/invoice/payment/medical-record fact tables) fed by a Kafka consumer (8 topics, idempotent, retry + DLQ); dashboard summary, appointment stats, revenue, doctor ranking, patient activity (ADMIN/DOCTOR only) |
 | notification-service | 8089 | Notifications | In-app notifications materialized from Kafka appointment/billing events (idempotent, retry + DLQ); paginated list + unread count, mark-read; JWT-scoped reads |
 | medical-record-service | 8091 | Clinical records | Encounter records CRUD + search; doctor/patient ownership and scoped search; publishes medical-record events |

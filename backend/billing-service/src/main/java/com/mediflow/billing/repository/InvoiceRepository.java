@@ -29,4 +29,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
             + "and (:appointmentId is null or i.appointmentId = :appointmentId)")
     Page<Invoice> search(@Param("status") InvoiceStatus status, @Param("patientId") UUID patientId,
                          @Param("appointmentId") UUID appointmentId, Pageable pageable);
+
+    /** True when the appointment already has an invoice that is not cancelled. */
+    boolean existsByAppointmentIdAndStatusNot(UUID appointmentId, InvoiceStatus status);
 }

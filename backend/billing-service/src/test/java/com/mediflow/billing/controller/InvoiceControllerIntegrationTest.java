@@ -238,7 +238,7 @@ class InvoiceControllerIntegrationTest {
                         .header("Authorization", "Bearer " + billingToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isConflict());
     }
 
     @Test
@@ -252,7 +252,7 @@ class InvoiceControllerIntegrationTest {
 
         mockMvc.perform(post("/api/v1/invoices/" + invoiceId + "/cancel")
                         .header("Authorization", "Bearer " + billingToken()))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isConflict());
     }
 
     @Test
@@ -268,7 +268,7 @@ class InvoiceControllerIntegrationTest {
                         .header("Authorization", "Bearer " + billingToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isConflict());
     }
 
     @Test

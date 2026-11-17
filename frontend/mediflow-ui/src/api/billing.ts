@@ -31,8 +31,16 @@ export const billingApi = {
     cancel: (invoiceId: string) =>
       api<Invoice>(`/api/v1/invoices/${invoiceId}/cancel`, { method: 'POST' }),
     payments: (invoiceId: string) => api<Payment[]>(`/api/v1/invoices/${invoiceId}/payments`),
-    recordPayment: (invoiceId: string, body: RecordPaymentRequest) =>
-      api<Invoice>(`/api/v1/invoices/${invoiceId}/payments`, { method: 'POST', body }),
+    /**
+     * Records a payment. Pass an idempotency key so a retried request (network failure, double
+     * click, refresh after a timeout) returns the original result instead of charging twice.
+     */
+    recordPayment: (invoiceId: string, body: RecordPaymentRequest, idempotencyKey?: string) =>
+      api<Invoice>(`/api/v1/invoices/${invoiceId}/payments`, {
+        method: 'POST',
+        body,
+        headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+      }),
   },
   refund: (paymentId: string) =>
     api<Invoice>(`/api/v1/payments/${paymentId}/refund`, { method: 'POST' }),

@@ -143,9 +143,9 @@ Generated: 2026-07-08
   - [backend/appointment-service/src/main/java/com/mediflow/appointment/service/AppointmentService.java](../backend/appointment-service/src/main/java/com/mediflow/appointment/service/AppointmentService.java)
   - [backend/appointment-service/src/main/java/com/mediflow/appointment/entity/Appointment.java](../backend/appointment-service/src/main/java/com/mediflow/appointment/entity/Appointment.java)
 - Current status:
-  - Basic workflow exists.
+  - Booking, search, reschedule, cancel, scoped RBAC, domain events, and database-enforced no-double-booking (PostgreSQL exclusion constraint, 409 on conflict).
 - Limitations:
-  - No doctor-availability logic, conflict detection, rescheduling, or event publishing.
+  - Doctor-availability/leave windows are stored in doctor-service but not yet enforced at booking time.
 
 ### Shared infrastructure
 - What it does:
@@ -327,6 +327,8 @@ List every required environment variable with a description. Mask secrets.
 - Add rate limiting, secrets handling, and security hardening.
 
 ## 12. Current Bugs
+> Historical scaffold-era notes; the current status is in §24 (latest: Milestone 5). None of the items below still describe the codebase.
+
 - Known bugs:
   - No confirmed runtime bugs from compile verification yet.
   - Gateway currently has no meaningful routing logic.
@@ -520,6 +522,17 @@ Continue building the MediFlow Patient Management System from the current scaffo
 - **Docs:** `docs/kafka-events.md` (outbox, retry/DLQ, correlation), `docs/runbook.md` (health/metrics, Kafka/Redis/PostgreSQL recovery, outbox/DLQ replay), `docs/architecture.md`, `docs/deployment.md`, `docs/database-design.md`, `docs/security.md`, `docs/features.md`. Logout wording corrected to "current session + presented access token".
 - **Deferred (documented):** Zipkin/OpenTelemetry tracing, Prometheus/Grafana server + dashboards, payment idempotency-key API, PostgreSQL exclusion constraint for appointment range races, outbox row archival, rate limiting.
 - **Not changed:** ports, DB topology, public APIs, role permissions, existing business logic. No commit/push performed.
+
+### Update (2026-11-17) — Milestone 5: business transaction integrity
+
+- **Appointment concurrency (DB-enforced):** `V6__add_appointment_slot_exclusion.sql` installs `btree_gist` and the exclusion constraints `ex_appointments_doctor_slot` (on `doctor_id`) and `ex_appointments_patient_slot` (on `patient_id`), each `(id WITH =, tsrange(start_time, end_time, '[)') WITH &&)` for `SCHEDULED`/`CONFIRMED`/`IN_PROGRESS` rows with `deleted_at IS NULL`, plus `ck_appointments_time_range` (`end_time > start_time`). The migration aborts with an actionable count instead of rewriting conflicting data. `AppointmentService` keeps the friendly pre-check, uses `saveAndFlush`, and maps SQLSTATE `23P01` to `ConflictException` (409); unrelated integrity errors are rethrown. Real-PostgreSQL `AppointmentSlotConcurrencyIntegrationTest` (8 tests): 8 simultaneous bookings → one 201 + seven 409 + one row + one outbox event, 5 simultaneous same-patient bookings across different doctors → one 201, raw-SQL overlap → `23P01`, cancel-then-rebook, back-to-back boundaries, reschedule conflict/release, patient RBAC.
+- **Payment idempotency:** `V6__add_payment_idempotency.sql` adds `payment_idempotency` with `UNIQUE (requester, idempotency_key)`, FK to `invoices(invoice_id)`, SHA-256 `request_fingerprint`, index on `created_at`. `PaymentCommandService` writes the claim, payment and outbox event in one transaction (rollback leaves no claim) and replays the stored result for a same-payload retry (`Idempotent-Replay: true`), while key reuse with a different payload is 409. `Idempotency-Key` is optional and validated as `[A-Za-z0-9._:-]{8,80}`. `PaymentIdempotencyCleanup` prunes after `billing.payment-idempotency.retention` (default `P7D`). Real-PostgreSQL `BillingIntegrityIntegrationTest` (8 tests): sequential replay, 6 concurrent retries → one payment/one event, conflicting payload 409, rollback then successful retry, caller-scoped keys, DB uniqueness, patient 403, second active invoice 409.
+- **Workflow consistency:** `V7__enforce_single_active_invoice_per_appointment.sql` adds the partial unique index `uq_invoices_active_appointment` (`appointment_id` where not CANCELLED) with a non-destructive pre-flight; `InvoiceService` pre-checks and translates `23505`. Appointment and billing state conflicts now return 409 consistently (previously some returned 400). Duplicate medical records per appointment remain allowed by design (multiple record types per visit).
+- **Consumer idempotency regression:** `NotificationIdempotencyIntegrationTest` and `AnalyticsEventIdempotencyIntegrationTest` run against real PostgreSQL 16 and prove redelivery/concurrent redelivery converges on one notification / one fact row / one ledger entry.
+- **Frontend:** the API client accepts extra request headers; `recordPayment` sends `Idempotency-Key`; the payment modal keeps one key per intent, regenerates it when amount/method/reference changes, and blocks double submits. Appointment create/reschedule show the 409 conflict with a "choose a different time slot" hint. Production build green.
+- **CORS:** gateway and billing-service allow `Idempotency-Key`/`X-Correlation-ID` and expose `Idempotent-Replay`/`X-Correlation-ID`.
+- **Docs:** `docs/api-design.md` (idempotency contract, 409 semantics), `docs/database-design.md` (constraints, claim table, retention), `docs/kafka-events.md` (consumer convergence, no duplicate payment event on replay), `docs/runbook.md` §16.5–16.8 (constraint remediation, invoice remediation, idempotency operations, read-only reconciliation SQL), `docs/deployment.md`/`.env.example` (new variables, `btree_gist` prerequisite), `docs/features.md`, `docs/project-roadmap.md`.
+- **Not changed:** ports, service topology, authentication/JWT revocation/RBAC rules, outbox architecture, existing APIs (additive header + intentional 409 contract change only). No commit/push performed.
 
 ### Accurate references
 For current, code-verified documentation see `docs/architecture.md`, `docs/security.md`, `docs/api-design.md`, `docs/database-design.md`, `docs/kafka-events.md`, `docs/microservices.md`, `docs/features.md`.

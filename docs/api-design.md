@@ -70,11 +70,13 @@ Outside `/api/v1`, hidden from OpenAPI (`@Hidden`), not routed by the gateway, a
 
 | Method & Path | Auth | Description |
 |---|---|---|
-| POST `` | authenticated (scoped; staff broad) | Create (status SCHEDULED); PATIENT forced to own patientId, DOCTOR to own doctorId, staff any. 400 if `endTime <= startTime` or time overlaps patient/doctor |
+| POST `` | authenticated (scoped; staff broad) | Create (status SCHEDULED); PATIENT forced to own patientId, DOCTOR to own doctorId, staff any. 400 if `endTime <= startTime`; **409** if the patient or doctor already has an overlapping appointment (also enforced by a PostgreSQL exclusion constraint, so a concurrent booking cannot slip through) |
 | GET `` | authenticated (scoped; staff broad) | Filter `status`, `patientId`, `doctorId`, `fromTime`, `toTime`, pageable; PATIENT/DOCTOR forced to own identity; unknown roles → 403 |
 | GET `/{appointmentId}` | authenticated (ownership) | Get by business id; PATIENT/DOCTOR only own (403 otherwise), staff any; 404 if missing |
-| PUT `/{appointmentId}` | authenticated (ownership) | Reschedule; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED; overlap-checked excluding self |
-| PATCH `/{appointmentId}/cancel` | authenticated (ownership) | Cancel; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED |
+| PUT `/{appointmentId}` | authenticated (ownership) | Reschedule; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED (**409** otherwise); overlap checked excluding self (**409** on conflict, DB-enforced) |
+| PATCH `/{appointmentId}/cancel` | authenticated (ownership) | Cancel; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED (**409** otherwise) |
+
+Reserving statuses: `SCHEDULED`, `CONFIRMED`, `IN_PROGRESS` hold the doctor's slot; `CANCELLED`, `COMPLETED` and `NO_SHOW` release it. Ranges are half-open, so 10:00–11:00 and 11:00–12:00 do not conflict.
 
 ## 6. Medical Record Service (8091) — `/api/v1/medical-records`
 
@@ -89,14 +91,46 @@ Outside `/api/v1`, hidden from OpenAPI (`@Hidden`), not routed by the gateway, a
 
 | Method & Path | Auth (role) | Description |
 |---|---|---|
-| POST `/api/v1/invoices` | ADMIN/BILLING_STAFF | Generate invoice (PENDING, computed amounts, `INV-...` number); 400 if total <= 0 |
+| POST `/api/v1/invoices` | ADMIN/BILLING_STAFF | Generate invoice (PENDING, computed amounts, `INV-...` number); 400 if total <= 0; **409** if the appointment already has a non-cancelled invoice (also enforced by a partial unique index) |
 | GET `/api/v1/invoices` | ADMIN/BILLING_STAFF/DOCTOR/NURSE/SUPPORT/PATIENT | Filter `status`, `patientId`, `appointmentId`, pageable; PATIENT forced to own patientId (403 if foreign filter); unknown roles → 403 |
 | GET `/api/v1/invoices/{invoiceId}` | ADMIN/BILLING_STAFF/DOCTOR/NURSE/SUPPORT/PATIENT | Invoice with items + payments; PATIENT only own invoice (403 otherwise), clinical/finance staff any; unknown roles → 403 |
-| PUT `/api/v1/invoices/{invoiceId}` | ADMIN/BILLING_STAFF | Edit items/tax/discount/dueDate/notes; only when PENDING |
-| POST `/api/v1/invoices/{invoiceId}/cancel` | ADMIN/BILLING_STAFF | Cancel; only PENDING with no payments |
-| POST `/api/v1/invoices/{invoiceId}/payments` | ADMIN/BILLING_STAFF | Record payment (≤ remaining balance); recomputes status PAID/PARTIALLY_PAID |
+| PUT `/api/v1/invoices/{invoiceId}` | ADMIN/BILLING_STAFF | Edit items/tax/discount/dueDate/notes; only when PENDING (**409** otherwise) |
+| POST `/api/v1/invoices/{invoiceId}/cancel` | ADMIN/BILLING_STAFF | Cancel; only PENDING with no payments (**409** otherwise) |
+| POST `/api/v1/invoices/{invoiceId}/payments` | ADMIN/BILLING_STAFF | Record payment (≤ remaining balance; **409** if it exceeds the balance or the invoice is CANCELLED); recomputes status PAID/PARTIALLY_PAID. Optional `Idempotency-Key` header — see 7.1 |
 | GET `/api/v1/invoices/{invoiceId}/payments` | ADMIN/BILLING_STAFF/DOCTOR/NURSE/SUPPORT/PATIENT | List payments (same read scoping as the invoice) |
-| POST `/api/v1/payments/{paymentId}/refund` | ADMIN/BILLING_STAFF | Refund a COMPLETED payment (→ REFUNDED) |
+| POST `/api/v1/payments/{paymentId}/refund` | ADMIN/BILLING_STAFF | Refund a COMPLETED payment (→ REFUNDED); **409** if the payment is not COMPLETED |
+
+### 7.1 Payment idempotency (`Idempotency-Key`)
+
+`POST /api/v1/invoices/{invoiceId}/payments` accepts an optional `Idempotency-Key` request header
+(8–80 characters from `A-Za-z0-9._:-`). It is optional so existing clients keep working, but any
+client that retries should send one.
+
+| Scenario | Behaviour |
+|---|---|
+| First request with a key | Payment recorded, `201`, no `Idempotent-Replay` header |
+| Same key + same payload (invoice, amount, method, reference) | Original invoice returned, `201`, `Idempotent-Replay: true`, no second payment |
+| Same key + different payload | `409` (`Idempotency-Key has already been used for a different payment request`) |
+| Concurrent requests with the same key | Exactly one payment; the others replay the winner's result |
+| Request fails (e.g. overpayment) | The claim rolls back with the transaction, so the key stays unused and can be retried |
+| No key | Legacy behaviour: each request creates a payment |
+
+The uniqueness scope is the authenticated caller (username) plus the key, so two staff members can
+use the same key for different payments. Keys are pruned after `PAYMENT_IDEMPOTENCY_RETENTION`
+(default `P7D`). This is internal duplicate suppression only: it does **not** provide the
+settlement or dispute guarantees of an external payment provider.
+
+CORS (gateway and billing-service) allows the `Idempotency-Key` request header and exposes
+`Idempotent-Replay` so browser clients can read the replay flag.
+
+### 7.2 Conflict semantics
+
+State and overlap conflicts return **409**, not 400: appointment overlap/cancel/reschedule in a
+non-mutable status, duplicate active invoice for an appointment, payment on a cancelled invoice or
+above the remaining balance, invoice update/cancel in a non-PENDING status, and refund of a
+non-COMPLETED payment. Pure input validation (missing fields, malformed JSON, `endTime <= startTime`,
+negative quantities, total ≤ 0) stays **400**. This is an intentional contract change from earlier
+milestones, where some of these returned 400.
 
 ## 8. Notification Service (8089) — `/api/v1/notifications`
 

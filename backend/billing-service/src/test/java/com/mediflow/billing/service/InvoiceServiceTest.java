@@ -14,6 +14,7 @@ import com.mediflow.billing.event.BillingEventPublisher;
 import com.mediflow.billing.repository.InvoiceRepository;
 import com.mediflow.billing.repository.PaymentRepository;
 import com.mediflow.billing.security.AccessControlService;
+import com.mediflow.common.exception.ConflictException;
 import com.mediflow.common.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -63,7 +64,7 @@ class InvoiceServiceTest {
     void createInvoiceComputesTotalsAndPublishes() {
         CreateInvoiceRequest request = createInvoiceRequest(2, "100.00", 1, "50.00", "10.00", "25.00");
 
-        when(invoiceRepository.save(any(Invoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(invoiceRepository.saveAndFlush(any(Invoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         Invoice result = invoiceService.createInvoice(request);
 
@@ -75,7 +76,7 @@ class InvoiceServiceTest {
         assertEquals(new BigDecimal("247.50"), result.getTotalAmount());
         assertEquals(0, result.getPaidAmount().compareTo(BigDecimal.ZERO));
         assertEquals(2, result.getItems().size());
-        verify(invoiceRepository).save(any(Invoice.class));
+        verify(invoiceRepository).saveAndFlush(any(Invoice.class));
         verify(eventPublisher).publishInvoiceGenerated(any(Invoice.class));
     }
 
@@ -83,7 +84,7 @@ class InvoiceServiceTest {
     void createInvoiceDefaultsMissingFinancialFieldsToZero() {
         CreateInvoiceRequest request = createInvoiceRequest(1, "100.00", null, null, null, null);
 
-        when(invoiceRepository.save(any(Invoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(invoiceRepository.saveAndFlush(any(Invoice.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         Invoice result = invoiceService.createInvoice(request);
 
@@ -109,6 +110,32 @@ class InvoiceServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> invoiceService.createInvoice(request));
         verify(invoiceRepository, never()).save(any(Invoice.class));
+    }
+
+    @Test
+    void createInvoiceRejectsASecondActiveInvoiceForTheSameAppointment() {
+        CreateInvoiceRequest request = createInvoiceRequest(1, "100.00", null, null, null, null);
+        request.setAppointmentId(UUID.randomUUID());
+        when(invoiceRepository.existsByAppointmentIdAndStatusNot(request.getAppointmentId(), InvoiceStatus.CANCELLED))
+                .thenReturn(true);
+
+        assertThrows(ConflictException.class, () -> invoiceService.createInvoice(request));
+        verify(invoiceRepository, never()).saveAndFlush(any(Invoice.class));
+        verify(eventPublisher, never()).publishInvoiceGenerated(any(Invoice.class));
+    }
+
+    @Test
+    void createInvoiceTranslatesDuplicateAppointmentIndexViolation() {
+        // The pre-check passed (no visible invoice) and the partial unique index rejected the insert
+        // because a concurrent request created one first.
+        CreateInvoiceRequest request = createInvoiceRequest(1, "100.00", null, null, null, null);
+        request.setAppointmentId(UUID.randomUUID());
+        when(invoiceRepository.saveAndFlush(any(Invoice.class)))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate key value",
+                        new java.sql.SQLException("duplicate key value violates unique constraint", "23505")));
+
+        assertThrows(ConflictException.class, () -> invoiceService.createInvoice(request));
+        verify(eventPublisher, never()).publishInvoiceGenerated(any(Invoice.class));
     }
 
     @Test
@@ -169,7 +196,7 @@ class InvoiceServiceTest {
         UpdateInvoiceRequest request = new UpdateInvoiceRequest();
         request.setItems(List.of(itemRequest(1, "200.00")));
 
-        assertThrows(IllegalArgumentException.class, () -> invoiceService.updateInvoice(invoiceId, request));
+        assertThrows(ConflictException.class, () -> invoiceService.updateInvoice(invoiceId, request));
     }
 
     @Test
@@ -203,7 +230,7 @@ class InvoiceServiceTest {
         invoice.setPaidAmount(new BigDecimal("50.00"));
         when(invoiceRepository.findByInvoiceIdForUpdate(invoiceId)).thenReturn(Optional.of(invoice));
 
-        assertThrows(IllegalArgumentException.class, () -> invoiceService.cancelInvoice(invoiceId));
+        assertThrows(ConflictException.class, () -> invoiceService.cancelInvoice(invoiceId));
     }
 
     @Test
@@ -213,7 +240,7 @@ class InvoiceServiceTest {
         invoice.setStatus(InvoiceStatus.PAID);
         when(invoiceRepository.findByInvoiceIdForUpdate(invoiceId)).thenReturn(Optional.of(invoice));
 
-        assertThrows(IllegalArgumentException.class, () -> invoiceService.cancelInvoice(invoiceId));
+        assertThrows(ConflictException.class, () -> invoiceService.cancelInvoice(invoiceId));
     }
 
     @Test
@@ -261,7 +288,7 @@ class InvoiceServiceTest {
         invoice.setTotalAmount(new BigDecimal("100.00"));
         when(invoiceRepository.findByInvoiceIdForUpdate(invoiceId)).thenReturn(Optional.of(invoice));
 
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(ConflictException.class,
                 () -> invoiceService.recordPayment(invoiceId, paymentRequest("150.00")));
         verify(invoiceRepository, never()).save(any(Invoice.class));
     }
@@ -274,7 +301,7 @@ class InvoiceServiceTest {
         invoice.setTotalAmount(new BigDecimal("100.00"));
         when(invoiceRepository.findByInvoiceIdForUpdate(invoiceId)).thenReturn(Optional.of(invoice));
 
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(ConflictException.class,
                 () -> invoiceService.recordPayment(invoiceId, paymentRequest("50.00")));
     }
 
@@ -318,7 +345,7 @@ class InvoiceServiceTest {
         UUID paymentId = UUID.randomUUID();
         when(paymentRepository.findByPaymentIdForUpdate(paymentId)).thenReturn(Optional.of(payment));
 
-        assertThrows(IllegalArgumentException.class, () -> invoiceService.refundPayment(paymentId));
+        assertThrows(ConflictException.class, () -> invoiceService.refundPayment(paymentId));
     }
 
     @Test

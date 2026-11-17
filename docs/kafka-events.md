@@ -94,7 +94,7 @@ appointment-service, billing-service and medical-record-service each own an `out
 Consumes appointment (created/updated/cancelled) and billing (invoice.generated/payment.confirmed) topics. Deserialization uses `ErrorHandlingDeserializer` with the delegate `JsonDeserializer`, so a malformed record never kills the poll loop.
 
 - Consumer group `notification-service`; `auto-offset-reset: earliest`; `enable-auto-commit: false`; `ack-mode: record` (offset committed only after successful processing).
-- **Idempotency:** the event `eventId` is stored as `notifications.source_event_id` (unique index). A duplicate event is skipped before insert; a concurrent duplicate is swallowed on `DataIntegrityViolationException`.
+- **Idempotency:** the event `eventId` is stored as `notifications.source_event_id` (unique index). A duplicate event is skipped before insert. If two deliveries race past the pre-check, the unique index lets exactly one row commit; the loser's transaction fails, Kafka redelivers, and the pre-check then skips it. The invariant is one notification per event — proven against real PostgreSQL in `NotificationIdempotencyIntegrationTest`.
 - **Retry/DLQ:** `DefaultErrorHandler` with `ExponentialBackOffWithMaxRetries(5)` (1s doubling to a 20s cap). `DeserializationException` is non-retryable and goes straight to the DLQ. Exhausted retries publish to `dlq.<original-topic>`; `failIfSendResultIsError=true` means a failed DLQ publish fails the record, so the offset is not committed and the message is not silently lost. Micrometer counters `mediflow.kafka.consumer.retries` and `mediflow.kafka.consumer.dead-letter` (tagged by topic) make retries/DLQ visible.
 - Only events with a `patientId` payload produce a notification; the recipient is the patient (`recipientId = payload.patientId`). No doctor fan-out.
 - The consumer restores `X-Correlation-ID` into the MDC from `event.correlationId` for the duration of processing.
@@ -110,9 +110,18 @@ Consumes **8 topics** with three `@KafkaListener`s (appointment → `Appointment
 
 Behaviour mirrors notification-service: consumer group `analytics-service`, `auto-offset-reset: earliest`, `enable-auto-commit: false`, `ack-mode: record`, `ErrorHandlingDeserializer`, `spring.json.trusted.packages: com.mediflow.*`, payloads deserialized into the producer event classes, and `X-Correlation-ID` restored into the MDC.
 
-- **Idempotency:** global `processed_events(event_id PK)` ledger. Each processor first checks `existsById(eventId)` and returns if already processed; a concurrent duplicate is swallowed on `DataIntegrityViolationException`. Upserts for appointment/invoice facts are needed because those rows are updated by multiple events over the aggregate's life.
+- **Idempotency:** global `processed_events(event_id PK)` ledger. Each processor first checks `existsById(eventId)` and returns if already processed. If two deliveries race past the pre-check, the ledger primary key (and the fact-table uniques) ensure only one commits; Kafka redelivers the loser and the pre-check skips it. Upserts for appointment/invoice facts are needed because those rows are updated by multiple events over the aggregate's life. `AnalyticsEventIdempotencyIntegrationTest` proves the single-row outcome against real PostgreSQL, including concurrent redelivery.
 - **Retry/DLQ:** `DefaultErrorHandler` bean `analyticsErrorHandler` with `ExponentialBackOffWithMaxRetries(5)` (1s → 20s cap), non-retryable `DeserializationException`, and a `DeadLetterPublishingRecoverer` publishing to `dlq.<original-topic>` with `failIfSendResultIsError=true`. The same retry/DLQ counters are recorded.
 - Processing is transactional per event; events with a missing event id or an unmappable payload are skipped without marking processed.
+
+### 6.3 Producer-side duplicate suppression (payments)
+
+`billing-service` emits `payment.confirmed.v1` / `payment.refunded.v1` from inside the same
+transaction that writes the payment and its outbox row. Replaying an `Idempotency-Key` does **not**
+create a second payment, so it does not enqueue a second event: the outbox count stays at one per
+real payment (asserted in `BillingIntegrityIntegrationTest`). Consumers therefore see one billing
+event per payment even when the client retries; their own `eventId` deduplication covers the
+at-least-once redelivery case described above.
 
 ## 7. Correlation and Observability
 

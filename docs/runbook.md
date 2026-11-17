@@ -463,7 +463,8 @@ mvn -B -ntp verify
 ```
 
 - Most services test on H2 (PostgreSQL mode, Flyway disabled) — no external infra.
-- `analytics-service`, `medical-record-service`, and `notification-service` integration tests use **Testcontainers PostgreSQL 16** and require Docker (they auto-skip if Docker is unavailable). The JVM default timezone is set to UTC for these.
+- `appointment-service` (slot exclusion/concurrency), `billing-service` (payment idempotency, invoice-per-appointment), `analytics-service`, `medical-record-service`, and `notification-service` (event idempotency) integration tests use **Testcontainers PostgreSQL 16** and require Docker (they auto-skip if Docker is unavailable). The JVM default timezone is set to UTC for these.
+- Appointment concurrency tests run 8 simultaneous bookings for one doctor slot (and 5 simultaneous same-patient bookings across different doctors) and assert exactly one `201`, the rest `409`, with one persisted row and one outbox event (`AppointmentSlotConcurrencyIntegrationTest`). Billing runs 6 concurrent retries with one `Idempotency-Key` and asserts one payment (`BillingIntegrityIntegrationTest`).
 - Token-revocation suites use **Testcontainers Redis** (`redis:7.2-alpine`): `AuthRevocationRedisIntegrationTest` (auth-service) and `CrossServiceTokenRevocationIntegrationTest` (patient-service, proving a revocation written by auth-service is enforced by another service). `RefreshConcurrencyIntegrationTest` uses the H2 DB row lock. All of them auto-skip without Docker (`disabledWithoutDocker = true`).
 - Every service's test `application.yml` sets `security.revocation.enabled: false` so ordinary RBAC tests do not need Redis; the suites above override it with `@SpringBootTest(properties = "security.revocation.enabled=true")` against the Testcontainers instance. Do not mock the registry in those suites - that would remove the behaviour under test.
 - Testcontainers start-up is slow (often 1-3 min on Windows/Docker Desktop), so a reactor run can look idle for a long time before the first `Tests run:` line appears.
@@ -608,3 +609,153 @@ CI runs all of this automatically via `.github/workflows/ci.yml` (backend `mvn v
 ### 16.4 Downstream auth-service degraded
 
 `patient-service`/`doctor-service` validate `userId` references through auth-service. The verifier uses a 1s connect/3s read timeout, no retries, and a circuit breaker (5 consecutive transport/5xx failures → open for 30s). While open, profile writes that need verification fail fast with **503**; reads are unaffected. Fix auth-service; the breaker closes automatically on the next successful probe after the 30s window.
+
+### 16.5 Appointment slot constraint remediation
+
+`V6__add_appointment_slot_exclusion.sql` installs `btree_gist` and the `ex_appointments_doctor_slot`
+and `ex_appointments_patient_slot` exclusion constraints. It refuses to run if existing rows would
+violate the new rules, and the whole migration rolls back, so the service will not start until the
+data is fixed.
+
+1. **Identify the reason.** The startup error names one of:
+   - `appointment(s) have end_time <= start_time`
+   - `pair(s) of active appointments overlap for the same doctor`
+   - `pair(s) of active appointments overlap for the same patient`
+2. **Inspect offending rows** (read-only):
+   ```sql
+   -- run in appointment_db
+   SELECT appointment_id, doctor_id, start_time, end_time, status
+     FROM appointments
+    WHERE end_time <= start_time;
+
+   SELECT a.appointment_id AS first_id, b.appointment_id AS second_id,
+          a.doctor_id, a.start_time, a.end_time, b.start_time, b.end_time
+     FROM appointments a
+     JOIN appointments b
+       ON a.doctor_id = b.doctor_id
+      AND a.id < b.id
+    WHERE a.status IN ('SCHEDULED','CONFIRMED','IN_PROGRESS')
+      AND b.status IN ('SCHEDULED','CONFIRMED','IN_PROGRESS')
+      AND a.deleted_at IS NULL AND b.deleted_at IS NULL
+      AND tsrange(a.start_time, a.end_time, '[)') && tsrange(b.start_time, b.end_time, '[)');
+
+   SELECT a.appointment_id AS first_id, b.appointment_id AS second_id,
+          a.patient_id, a.start_time, a.end_time, b.start_time, b.end_time
+     FROM appointments a
+     JOIN appointments b
+       ON a.patient_id = b.patient_id
+      AND a.id < b.id
+    WHERE a.status IN ('SCHEDULED','CONFIRMED','IN_PROGRESS')
+      AND b.status IN ('SCHEDULED','CONFIRMED','IN_PROGRESS')
+      AND a.deleted_at IS NULL AND b.deleted_at IS NULL
+      AND tsrange(a.start_time, a.end_time, '[)') && tsrange(b.start_time, b.end_time, '[)');
+   ```
+3. **Fix with business decisions, not bulk rewrites.** Cancel or reschedule the losing appointment
+   (`PATCH /api/v1/appointments/{id}/cancel` or `PUT /api/v1/appointments/{id}`), or correct an
+   impossible time range. `CANCELLED`, `COMPLETED`, `NO_SHOW` and soft-deleted rows do not reserve
+   the slot.
+4. Restart the service; Flyway applies V6 on the next start.
+
+Under normal operation a double booking cannot exist: the constraint rejects it with SQLSTATE
+`23P01`, which the service reports as **409**. Seeing this remediation path means the data predates
+the constraint or was written outside the service.
+
+**Extensions in managed PostgreSQL.** `CREATE EXTENSION btree_gist` needs privileges to install a
+contrib extension. On a managed service where the application role cannot create extensions, have
+the DBA run `CREATE EXTENSION IF NOT EXISTS btree_gist;` in `appointment_db` before the first
+deployment; the migration then succeeds as a no-op.
+
+### 16.6 Invoice per appointment remediation
+
+`V7__enforce_single_active_invoice_per_appointment.sql` adds a partial unique index and aborts if an
+appointment already has more than one non-cancelled invoice.
+
+```sql
+-- run in billing_db (read-only)
+SELECT appointment_id, count(*) AS active_invoices,
+       array_agg(invoice_number ORDER BY issued_at) AS invoice_numbers
+  FROM invoices
+ WHERE appointment_id IS NOT NULL
+   AND status <> 'CANCELLED'
+ GROUP BY appointment_id
+HAVING count(*) > 1;
+```
+
+Decide which invoice is authoritative, then cancel the others with
+`POST /api/v1/invoices/{invoiceId}/cancel` (only possible while PENDING and unpaid). If a duplicate is
+already paid, refund it first (`POST /api/v1/payments/{paymentId}/refund`), then cancel, or keep it and
+record the correction through your finance process. Never delete invoice or payment rows: the
+migration will not do it either.
+
+### 16.7 Payment idempotency: retention, replay and conflicts
+
+- **Configuration:** `PAYMENT_IDEMPOTENCY_RETENTION` (default `P7D`), `PAYMENT_IDEMPOTENCY_CLEANUP_CRON`
+  (default `0 15 3 * * *`, i.e. 03:15 daily) and `PAYMENT_IDEMPOTENCY_CLEANUP_ENABLED` (default `true`).
+  The job lives in `PaymentIdempotencyCleanup` and deletes only `payment_idempotency` claims older
+  than the retention window; payments and invoices are never touched.
+- **Client contract:** send `Idempotency-Key` on `POST /api/v1/invoices/{invoiceId}/payments`. A replay
+  returns `201` with `Idempotent-Replay: true`. The key is scoped to the authenticated caller.
+- **Diagnosing a 409 on payment:** the message is either
+  `Idempotency-Key has already been used for a different payment request` (same key, different
+  amount/method/reference/invoice) or a domain conflict (cancelled invoice, amount above the
+  remaining balance). For the former, check the claim:
+  ```sql
+  SELECT idempotency_key, requester, invoice_id, request_fingerprint, payment_id, created_at
+    FROM payment_idempotency
+   WHERE requester = '<username>' AND idempotency_key = '<key>';
+  ```
+  The client should use a new key for a genuinely different payment; reusing the key for the same
+  payload is what makes retries safe.
+- **Stuck client retry loop:** if a request failed, the claim was rolled back and the key is still
+  free — retrying the same payload is expected to succeed. If a claim exists but
+  `payment_id IS NULL`, the original transaction had not committed; wait and retry, or inspect
+  `outbox_events`/`payments` for the invoice. A claim is only durable when its payment is durable.
+- **After retention:** an old key is forgotten, so the same key is treated as a new request. Keep
+  client retry windows shorter than the retention period.
+- **What this does not do:** it suppresses duplicate internal payment records. It is not an external
+  payment-provider integration and provides no settlement, chargeback or provider-side idempotency
+  guarantee.
+
+### 16.8 Reconciliation queries (read-only)
+
+These queries find workflow gaps that the constraints cannot express. None of them modify data.
+
+```sql
+-- billing_db: invoice totals that do not match their completed payments
+SELECT i.invoice_id, i.invoice_number, i.total_amount, i.paid_amount,
+       coalesce(sum(p.amount) FILTER (WHERE p.status = 'COMPLETED'), 0) AS completed_payments
+  FROM invoices i
+  LEFT JOIN payments p ON p.invoice_id = i.id
+ WHERE i.status <> 'CANCELLED'
+ GROUP BY i.id
+HAVING i.paid_amount <> coalesce(sum(p.amount) FILTER (WHERE p.status = 'COMPLETED'), 0)
+    OR (i.status = 'PAID' AND i.paid_amount <> i.total_amount);
+
+-- billing_db: claims whose payment is missing (should only appear mid-transaction)
+SELECT c.idempotency_key, c.requester, c.invoice_id, c.payment_id
+  FROM payment_idempotency c
+  LEFT JOIN invoices i ON i.invoice_id = c.invoice_id
+ WHERE i.id IS NULL;
+
+-- appointment_db: outbox backlog that has been pending for more than 15 minutes
+SELECT status, count(*), min(created_at) AS oldest
+  FROM outbox_events
+ WHERE status = 'PENDING'
+ GROUP BY status;
+
+-- notification_db: events received more than once but projected once (sanity check)
+SELECT source_event_id, count(*) FROM notifications GROUP BY source_event_id HAVING count(*) > 1;
+
+-- analytics_db: ledger entries without a matching fact (only valid for mapped event types)
+SELECT pe.event_id, pe.event_type
+  FROM processed_events pe
+  LEFT JOIN appointment_facts af ON af.source_event_id = pe.event_id
+  LEFT JOIN payment_facts pf ON pf.source_event_id = pe.event_id
+ WHERE pe.event_type IN ('APPOINTMENT_CREATED','APPOINTMENT_UPDATED','APPOINTMENT_CANCELLED',
+                          'PAYMENT_CONFIRMED','PAYMENT_REFUNDED')
+   AND af.id IS NULL AND pf.id IS NULL;
+```
+
+A non-empty result is an incident, not a repair instruction: fix the cause (outbox `DEAD` rows,
+DLQ drain, broker outage) and replay via the outbox/DLQ procedures in §16.1. Consumers deduplicate,
+so replay cannot create duplicate notifications or analytics facts.

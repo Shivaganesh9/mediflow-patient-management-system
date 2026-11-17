@@ -85,6 +85,8 @@ export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   params?: object;
+  /** Extra request headers, e.g. a caller-supplied Idempotency-Key. */
+  headers?: Record<string, string>;
   /** Set to false for public endpoints (login, register, password reset). */
   auth?: boolean;
 }
@@ -207,7 +209,7 @@ function buildUrl(path: string, params?: RequestOptions['params']): string {
 }
 
 async function performRequest(path: string, options: RequestOptions): Promise<Response> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...(options.headers ?? {}) };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   const token = getAccessToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;

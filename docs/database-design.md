@@ -31,8 +31,15 @@
 
 ## 5. Appointment Service (appointment-service)
 
-- `appointments` (V1, V2, V3): `appointment_id` UUID UNIQUE, `patient_id`, `doctor_id`, `start_time`, `end_time`, `status` (SCHEDULED/CONFIRMED/IN_PROGRESS/CANCELLED/COMPLETED/NO_SHOW), `notes`, `reason`; V2 adds `version`; V3 adds `appointment_type`.
+- `appointments` (V1, V2, V3, V6): `appointment_id` UUID UNIQUE, `patient_id`, `doctor_id`, `start_time`, `end_time`, `status` (SCHEDULED/CONFIRMED/IN_PROGRESS/CANCELLED/COMPLETED/NO_SHOW), `notes`, `reason`; V2 adds `version`; V3 adds `appointment_type`.
 - Indexes: `patient_id`, `doctor_id`, `start_time`; V5 adds composite `(doctor_id, start_time)`, `(patient_id, start_time)`, `(status, start_time)`.
+- V6 (`V6__add_appointment_slot_exclusion.sql`) makes the database the final authority on double-booking:
+  - `CREATE EXTENSION IF NOT EXISTS btree_gist` (required because the constraint mixes equality and range operators; ships with PostgreSQL contrib).
+  - `ck_appointments_time_range`: `CHECK (end_time > start_time)`.
+  - `ex_appointments_doctor_slot`: `EXCLUDE USING gist (doctor_id WITH =, tsrange(start_time, end_time, '[)') WITH &&)` with predicate `status IN ('SCHEDULED','CONFIRMED','IN_PROGRESS') AND deleted_at IS NULL`. Reserving statuses hold the slot; CANCELLED/COMPLETED/NO_SHOW and soft-deleted rows release it. `'[)'` bounds allow back-to-back appointments.
+  - `ex_appointments_patient_slot`: the same exclusion shape on `patient_id`, so a patient cannot be booked into two places at once either (the application pre-check covers this, but only the database closes the concurrent race).
+  - The migration is non-destructive: a pre-flight `DO` block raises an actionable exception (with counts) if existing rows have `end_time <= start_time`, overlapping active appointments for the same doctor, or overlapping active appointments for the same patient, instead of rewriting data. See `docs/runbook.md`.
+  - A violation surfaces as SQLSTATE `23P01`; the service translates it to HTTP 409 with a message naming the doctor or patient conflict.
 - `outbox_events` (V4) — see §10.
 
 ## 6. Medical Record Service (medical-record-service)
@@ -48,6 +55,9 @@
 - `invoice_items` (V3): `item_id` UUID UNIQUE, `invoice_id` FK → invoices, `item_type`, `description`, `quantity`, `unit_price`, `amount`.
 - `payments` (V3): `payment_id` UUID UNIQUE, `invoice_id` FK → invoices, `amount`, `method`, `reference`, `status` (COMPLETED/REFUNDED), `paid_at`.
 - V5 adds composite indexes `invoices(patient_id, issued_at)`, `invoices(status, issued_at)`, `payments(invoice_id, status)`; `outbox_events` (V4) — see §10.
+- V6 (`V6__add_payment_idempotency.sql`) adds `payment_idempotency`: `idempotency_key` (80), `requester` (255, authenticated username), `invoice_id` (public `invoices.invoice_id`, FK), `request_fingerprint` (SHA-256 hex), `payment_id`, plus BaseEntity audit columns. `UNIQUE (requester, idempotency_key)` serialises retries; index on `created_at` supports the retention prune. The row is inserted in the same transaction as the payment and its outbox event, so a rollback leaves no claim.
+- V7 (`V7__enforce_single_active_invoice_per_appointment.sql`) adds the partial unique index `uq_invoices_active_appointment ON invoices (appointment_id) WHERE appointment_id IS NOT NULL AND status <> 'CANCELLED'`, preventing double billing for one appointment while still allowing a replacement invoice after cancellation. Pre-flight aborts the migration (listing duplicate counts) if existing data violates it; it never deletes or merges financial rows.
+- Retention: `payment_idempotency` rows are pruned daily by `PaymentIdempotencyCleanup` after `billing.payment-idempotency.retention` (default `P7D`). Only claims are deleted, never payments or invoices.
 
 ## 8. Notification Service (notification-service)
 
@@ -93,5 +103,5 @@ Each producer service owns an identical `outbox_events` table (appointment `V4`,
 
 ## 12. Tests
 
-- Unit/service tests use **H2 in PostgreSQL mode** (`create-drop`, Flyway disabled) for patient/doctor/auth/appointment/billing/notification services.
-- `analytics-service`, `medical-record-service`, and `notification-service` integration tests use **Testcontainers PostgreSQL 16** with Flyway enabled and a Docker guard (`disabledWithoutDocker = true`); analytics and notification tests also set the JVM default timezone to UTC (pgjdbc rejects non-UTC zones on PG16).
+- Unit/service tests use **H2 in PostgreSQL mode** (`create-drop`, Flyway disabled) for patient/doctor/auth/appointment/billing/notification services. H2 does not implement PostgreSQL exclusion constraints, so the database-level slot guarantee is covered separately (next bullet).
+- `appointment-service` (`AppointmentSlotConcurrencyIntegrationTest`), `billing-service` (`BillingIntegrityIntegrationTest`), `analytics-service`, `medical-record-service` and `notification-service` integration tests use **Testcontainers PostgreSQL 16** with Flyway enabled, `ddl-auto: validate` and a Docker guard (`disabledWithoutDocker = true`); analytics and notification tests also set the JVM default timezone to UTC (pgjdbc rejects non-UTC zones on PG16). These prove the migrations and the concurrency/idempotency guarantees against a real database.

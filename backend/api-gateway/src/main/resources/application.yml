@@ -112,7 +112,8 @@ spring:
           '[/**]':
             allowedOrigins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
             allowedMethods: "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-            allowedHeaders: "Authorization,Content-Type,X-Requested-With"
+            allowedHeaders: "Authorization,Content-Type,X-Requested-With,Idempotency-Key,X-Correlation-ID"
+            exposedHeaders: "Idempotent-Replay,X-Correlation-ID"
             allowCredentials: true
 
 management:

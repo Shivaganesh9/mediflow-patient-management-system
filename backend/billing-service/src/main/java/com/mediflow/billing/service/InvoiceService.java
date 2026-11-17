@@ -13,8 +13,11 @@ import com.mediflow.billing.event.BillingEventPublisher;
 import com.mediflow.billing.repository.InvoiceRepository;
 import com.mediflow.billing.repository.PaymentRepository;
 import com.mediflow.billing.security.AccessControlService;
+import com.mediflow.common.exception.ConflictException;
 import com.mediflow.common.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -22,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -32,9 +36,16 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class InvoiceService {
 
     private static final BigDecimal ONE_HUNDRED = BigDecimal.valueOf(100);
+
+    /** SQLSTATE for a unique violation (PostgreSQL and H2 both report it). */
+    private static final String UNIQUE_VIOLATION = "23505";
+
+    private static final String DUPLICATE_ACTIVE_INVOICE_MESSAGE =
+            "An active invoice already exists for this appointment";
 
     private final InvoiceRepository invoiceRepository;
     private final PaymentRepository paymentRepository;
@@ -43,6 +54,15 @@ public class InvoiceService {
 
     @Transactional
     public Invoice createInvoice(CreateInvoiceRequest request) {
+        // One active invoice per appointment: two staff members generating an invoice for the same
+        // visit must not both succeed (that path bills the patient twice). The partial unique index
+        // uq_invoices_active_appointment enforces the same rule under concurrency.
+        if (request.getAppointmentId() != null
+                && invoiceRepository.existsByAppointmentIdAndStatusNot(
+                        request.getAppointmentId(), InvoiceStatus.CANCELLED)) {
+            throw new ConflictException(DUPLICATE_ACTIVE_INVOICE_MESSAGE);
+        }
+
         List<InvoiceItem> items = buildItems(request.getItems(), null);
 
         Invoice invoice = new Invoice();
@@ -61,7 +81,7 @@ public class InvoiceService {
         applyTotals(invoice);
         requirePositiveTotal(invoice);
 
-        invoice = invoiceRepository.save(invoice);
+        invoice = saveAndTranslateDuplicateAppointment(invoice);
         eventPublisher.publishInvoiceGenerated(invoice);
         return invoice;
     }
@@ -101,7 +121,7 @@ public class InvoiceService {
                 .orElseThrow(() -> new ResourceNotFoundException("Invoice not found with id: " + invoiceId));
 
         if (invoice.getStatus() != InvoiceStatus.PENDING) {
-            throw new IllegalArgumentException("Invoice cannot be modified in status " + invoice.getStatus());
+            throw new ConflictException("Invoice cannot be modified in status " + invoice.getStatus());
         }
 
         if (request.getItems() != null) {
@@ -136,10 +156,10 @@ public class InvoiceService {
         invoice.getPayments().size();
 
         if (invoice.getStatus() != InvoiceStatus.PENDING) {
-            throw new IllegalArgumentException("Invoice cannot be cancelled in status " + invoice.getStatus());
+            throw new ConflictException("Invoice cannot be cancelled in status " + invoice.getStatus());
         }
         if (invoice.getPaidAmount().compareTo(BigDecimal.ZERO) > 0) {
-            throw new IllegalArgumentException("Invoice with recorded payments cannot be cancelled; refund first");
+            throw new ConflictException("Invoice with recorded payments cannot be cancelled; refund first");
         }
 
         invoice.setStatus(InvoiceStatus.CANCELLED);
@@ -150,20 +170,27 @@ public class InvoiceService {
         return invoice;
     }
 
+    /**
+     * Applies a payment and reports the created {@link Payment} together with the invoice.
+     *
+     * <p>Kept on the same transaction as the caller so the idempotency claim, the payment and the
+     * outbox event commit atomically. {@link #recordPayment(UUID, RecordPaymentRequest)} keeps the
+     * original invoice-only signature for existing callers.</p>
+     */
     @Transactional
-    public Invoice recordPayment(UUID invoiceId, RecordPaymentRequest request) {
+    public PaymentReceipt applyPayment(UUID invoiceId, RecordPaymentRequest request) {
         Invoice invoice = invoiceRepository.findByInvoiceIdForUpdate(invoiceId)
                 .orElseThrow(() -> new ResourceNotFoundException("Invoice not found with id: " + invoiceId));
         invoice.getPayments().size();
 
         if (invoice.getStatus() == InvoiceStatus.CANCELLED) {
-            throw new IllegalArgumentException("Cannot record a payment against a cancelled invoice");
+            throw new ConflictException("Cannot record a payment against a cancelled invoice");
         }
 
         BigDecimal amount = money(request.getAmount());
         BigDecimal remaining = invoice.getTotalAmount().subtract(invoice.getPaidAmount());
         if (amount.compareTo(remaining) > 0) {
-            throw new IllegalArgumentException(
+            throw new ConflictException(
                     "Payment amount exceeds the remaining balance of " + remaining);
         }
 
@@ -181,7 +208,12 @@ public class InvoiceService {
         invoice = invoiceRepository.save(invoice);
         invoice.getItems().size();
         eventPublisher.publishPaymentConfirmed(invoice, payment);
-        return invoice;
+        return new PaymentReceipt(invoice, payment);
+    }
+
+    @Transactional
+    public Invoice recordPayment(UUID invoiceId, RecordPaymentRequest request) {
+        return applyPayment(invoiceId, request).invoice();
     }
 
     @Transactional
@@ -190,7 +222,7 @@ public class InvoiceService {
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found with id: " + paymentId));
 
         if (payment.getStatus() != PaymentStatus.COMPLETED) {
-            throw new IllegalArgumentException("Only completed payments can be refunded");
+            throw new ConflictException("Only completed payments can be refunded");
         }
 
         Invoice invoice = payment.getInvoice();
@@ -202,6 +234,36 @@ public class InvoiceService {
         invoice = invoiceRepository.save(invoice);
         eventPublisher.publishPaymentRefunded(invoice, payment);
         return invoice;
+    }
+
+    /**
+     * Persists a new invoice and maps a duplicate active-invoice rejection to a 409.
+     *
+     * <p>The pre-check gives a precise message for the common case; the partial unique index is the
+     * authority when two requests race.</p>
+     */
+    private Invoice saveAndTranslateDuplicateAppointment(Invoice invoice) {
+        try {
+            return invoiceRepository.saveAndFlush(invoice);
+        } catch (DataIntegrityViolationException ex) {
+            if (isUniqueViolation(ex)) {
+                log.debug("Duplicate active invoice rejected for appointment {}", invoice.getAppointmentId());
+                throw new ConflictException(DUPLICATE_ACTIVE_INVOICE_MESSAGE);
+            }
+            throw ex;
+        }
+    }
+
+    private boolean isUniqueViolation(Throwable throwable) {
+        Throwable cause = throwable;
+        while (cause != null) {
+            if (cause instanceof SQLException sqlException
+                    && UNIQUE_VIOLATION.equals(sqlException.getSQLState())) {
+                return true;
+            }
+            cause = cause.getCause() == cause ? null : cause.getCause();
+        }
+        return false;
     }
 
     private void applyItems(Invoice invoice, List<InvoiceItem> items) {

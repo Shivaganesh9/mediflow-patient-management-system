@@ -304,8 +304,7 @@ function CreateAppointmentModal({
       });
       onCreated();
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message);
-      else setError('Unable to schedule appointment.');
+      setError(appointmentErrorMessage(err, 'Unable to schedule appointment.'));
     } finally {
       setSubmitting(false);
     }
@@ -425,8 +424,7 @@ function RescheduleModal({
       });
       onSaved();
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message);
-      else setError('Unable to reschedule appointment.');
+      setError(appointmentErrorMessage(err, 'Unable to reschedule appointment.'));
     } finally {
       setSubmitting(false);
     }
@@ -479,4 +477,16 @@ function RescheduleModal({
       </form>
     </Modal>
   );
+}
+
+/**
+ * Turns an appointment API failure into a message the user can act on. A 409 means the doctor's
+ * slot is already taken (or the appointment changed state), so point at the fix instead of
+ * showing a bare "Request failed".
+ */
+function appointmentErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    return err.status === 409 ? `${err.message}. Please choose a different time slot.` : err.message;
+  }
+  return fallback;
 }

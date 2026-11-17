@@ -71,6 +71,8 @@ Notes:
 - **Pool/query tuning** (all services): `DB_POOL_MAX_SIZE` (10), `DB_POOL_MIN_IDLE` (2), `DB_POOL_CONNECTION_TIMEOUT_MS` (3000), `DB_LEAK_DETECTION_MS` (20000), `JPA_SHOW_SQL` (false), `MAX_PAGE_SIZE` (100).
 - **Kafka bounds:** `KAFKA_DELIVERY_TIMEOUT_MS` (20000), `KAFKA_REQUEST_TIMEOUT_MS` (10000), `KAFKA_MAX_BLOCK_MS` (5000), `KAFKA_MAX_POLL_RECORDS` (100), `KAFKA_CONSUMER_CONCURRENCY` (1).
 - **Outbox relay** (appointment/billing/medical-record): `OUTBOX_PUBLISHER_ENABLED` (true), `OUTBOX_PUBLISHER_INTERVAL_MS` (1000), `OUTBOX_PUBLISHER_INITIAL_DELAY_MS` (5000), `OUTBOX_PUBLISHER_BATCH_SIZE` (20), `OUTBOX_PUBLISHER_MAX_ATTEMPTS` (10), `OUTBOX_PUBLISHER_SEND_TIMEOUT_MS` (5000). Do not disable it in a running environment — events would never leave the outbox.
+- **Payment idempotency** (billing-service): `PAYMENT_IDEMPOTENCY_RETENTION` (`P7D`), `PAYMENT_IDEMPOTENCY_CLEANUP_ENABLED` (`true`), `PAYMENT_IDEMPOTENCY_CLEANUP_CRON` (`0 15 3 * * *`). Keep the retention window longer than the client's retry window. See `docs/runbook.md` §16.7.
+- **PostgreSQL extensions:** appointment-service requires `btree_gist` (installed by Flyway V6). On managed PostgreSQL where the application role cannot create extensions, the DBA must pre-install it per database.
 - **Gateway HTTP client:** `GATEWAY_CONNECT_TIMEOUT_MS` (2000), `GATEWAY_RESPONSE_TIMEOUT` (10s), `GATEWAY_POOL_MAX_CONNECTIONS` (200), `GATEWAY_POOL_ACQUIRE_TIMEOUT_MS` (5000).
 - **Health:** `HEALTH_SHOW_DETAILS` (`never`; use `when-authorized`/`always` for local debugging only). All values are documented in `.env.example`.
 

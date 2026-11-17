@@ -7,20 +7,24 @@ import com.mediflow.appointment.entity.AppointmentStatus;
 import com.mediflow.appointment.event.AppointmentEventPublisher;
 import com.mediflow.appointment.repository.AppointmentRepository;
 import com.mediflow.appointment.security.AccessControlService;
+import com.mediflow.common.exception.ConflictException;
 import com.mediflow.common.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -46,12 +50,12 @@ class AppointmentServiceTest {
     void createAppointmentSavesScheduledAppointment() {
         CreateAppointmentRequest request = request(LocalDateTime.now().plusDays(1), LocalDateTime.now().plusDays(1).plusHours(1));
         when(appointmentRepository.hasOverlappingAppointment(any(), any(), any(), any())).thenReturn(false);
-        when(appointmentRepository.save(any(Appointment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(appointmentRepository.saveAndFlush(any(Appointment.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         Appointment result = appointmentService.createAppointment(request);
 
         assertEquals(AppointmentStatus.SCHEDULED, result.getStatus());
-        verify(appointmentRepository).save(any(Appointment.class));
+        verify(appointmentRepository).saveAndFlush(any(Appointment.class));
         verify(eventPublisher).publishCreated(any(Appointment.class));
     }
 
@@ -60,7 +64,7 @@ class AppointmentServiceTest {
         CreateAppointmentRequest request = request(LocalDateTime.now().plusDays(1).plusHours(1), LocalDateTime.now().plusDays(1));
 
         assertThrows(IllegalArgumentException.class, () -> appointmentService.createAppointment(request));
-        verify(appointmentRepository, never()).save(any(Appointment.class));
+        verify(appointmentRepository, never()).saveAndFlush(any(Appointment.class));
     }
 
     @Test
@@ -68,8 +72,54 @@ class AppointmentServiceTest {
         CreateAppointmentRequest request = request(LocalDateTime.now().plusDays(1), LocalDateTime.now().plusDays(1).plusHours(1));
         when(appointmentRepository.hasOverlappingAppointment(any(), any(), any(), any())).thenReturn(true);
 
-        assertThrows(IllegalArgumentException.class, () -> appointmentService.createAppointment(request));
-        verify(appointmentRepository, never()).save(any(Appointment.class));
+        assertThrows(ConflictException.class, () -> appointmentService.createAppointment(request));
+        verify(appointmentRepository, never()).saveAndFlush(any(Appointment.class));
+    }
+
+    @Test
+    void createAppointmentTranslatesDoctorExclusionViolationToConflict() {
+        // The pre-check passes (the slot looked free) and the database is the authority: PostgreSQL
+        // rejected the insert with SQLSTATE 23P01 because a concurrent request took the slot first.
+        CreateAppointmentRequest request = request(LocalDateTime.now().plusDays(1), LocalDateTime.now().plusDays(1).plusHours(1));
+        when(appointmentRepository.hasOverlappingAppointment(any(), any(), any(), any())).thenReturn(false);
+        when(appointmentRepository.saveAndFlush(any(Appointment.class)))
+                .thenThrow(new DataIntegrityViolationException("could not execute statement",
+                        new SQLException("conflicting key value violates exclusion constraint "
+                                + "\"ex_appointments_doctor_slot\"", "23P01")));
+
+        ConflictException conflict = assertThrows(ConflictException.class,
+                () -> appointmentService.createAppointment(request));
+
+        assertTrue(conflict.getMessage().contains("doctor already has an appointment"));
+        verify(eventPublisher, never()).publishCreated(any(Appointment.class));
+    }
+
+    @Test
+    void createAppointmentTranslatesPatientExclusionViolationToConflict() {
+        // A different doctor but the same patient: the patient slot constraint is the one that fires.
+        CreateAppointmentRequest request = request(LocalDateTime.now().plusDays(1), LocalDateTime.now().plusDays(1).plusHours(1));
+        when(appointmentRepository.hasOverlappingAppointment(any(), any(), any(), any())).thenReturn(false);
+        when(appointmentRepository.saveAndFlush(any(Appointment.class)))
+                .thenThrow(new DataIntegrityViolationException("could not execute statement",
+                        new SQLException("conflicting key value violates exclusion constraint "
+                                + "\"ex_appointments_patient_slot\"", "23P01")));
+
+        ConflictException conflict = assertThrows(ConflictException.class,
+                () -> appointmentService.createAppointment(request));
+
+        assertTrue(conflict.getMessage().contains("patient already has an appointment"));
+        verify(eventPublisher, never()).publishCreated(any(Appointment.class));
+    }
+
+    @Test
+    void createAppointmentRethrowsUnrelatedIntegrityViolations() {
+        CreateAppointmentRequest request = request(LocalDateTime.now().plusDays(1), LocalDateTime.now().plusDays(1).plusHours(1));
+        when(appointmentRepository.hasOverlappingAppointment(any(), any(), any(), any())).thenReturn(false);
+        when(appointmentRepository.saveAndFlush(any(Appointment.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate appointment id"));
+
+        assertThrows(DataIntegrityViolationException.class,
+                () -> appointmentService.createAppointment(request));
     }
 
     @Test
@@ -96,7 +146,7 @@ class AppointmentServiceTest {
         Appointment existing = existingAppointment(appointmentId, AppointmentStatus.SCHEDULED);
         when(appointmentRepository.findByAppointmentIdForUpdate(appointmentId)).thenReturn(Optional.of(existing));
         when(appointmentRepository.hasOverlappingAppointmentForUpdate(any(), any(), any(), any(), any())).thenReturn(false);
-        when(appointmentRepository.save(any(Appointment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(appointmentRepository.saveAndFlush(any(Appointment.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         UpdateAppointmentRequest request = new UpdateAppointmentRequest();
         request.setStartTime(LocalDateTime.now().plusDays(2));
@@ -120,7 +170,7 @@ class AppointmentServiceTest {
         request.setStartTime(LocalDateTime.now().plusDays(2));
         request.setEndTime(LocalDateTime.now().plusDays(2).plusHours(1));
 
-        assertThrows(IllegalArgumentException.class, () -> appointmentService.updateAppointment(appointmentId, request));
+        assertThrows(ConflictException.class, () -> appointmentService.updateAppointment(appointmentId, request));
     }
 
     @Test
@@ -133,7 +183,7 @@ class AppointmentServiceTest {
         request.setStartTime(LocalDateTime.now().plusDays(2));
         request.setEndTime(LocalDateTime.now().plusDays(2).plusHours(1));
 
-        assertThrows(IllegalArgumentException.class, () -> appointmentService.updateAppointment(appointmentId, request));
+        assertThrows(ConflictException.class, () -> appointmentService.updateAppointment(appointmentId, request));
     }
 
     @Test
@@ -141,7 +191,7 @@ class AppointmentServiceTest {
         UUID appointmentId = UUID.randomUUID();
         Appointment existing = existingAppointment(appointmentId, AppointmentStatus.CONFIRMED);
         when(appointmentRepository.findByAppointmentIdForUpdate(appointmentId)).thenReturn(Optional.of(existing));
-        when(appointmentRepository.save(any(Appointment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(appointmentRepository.saveAndFlush(any(Appointment.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         Appointment result = appointmentService.cancelAppointment(appointmentId);
 
@@ -155,7 +205,7 @@ class AppointmentServiceTest {
         Appointment existing = existingAppointment(appointmentId, AppointmentStatus.COMPLETED);
         when(appointmentRepository.findByAppointmentIdForUpdate(appointmentId)).thenReturn(Optional.of(existing));
 
-        assertThrows(IllegalArgumentException.class, () -> appointmentService.cancelAppointment(appointmentId));
+        assertThrows(ConflictException.class, () -> appointmentService.cancelAppointment(appointmentId));
     }
 
     @Test
@@ -165,7 +215,7 @@ class AppointmentServiceTest {
         when(accessControl.scopedPatientId(any())).thenReturn(scopedPatientId);
         when(accessControl.scopedDoctorId(any())).thenReturn(scopedDoctorId);
         when(appointmentRepository.hasOverlappingAppointment(any(), any(), any(), any())).thenReturn(false);
-        when(appointmentRepository.save(any(Appointment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(appointmentRepository.saveAndFlush(any(Appointment.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         Appointment result = appointmentService.createAppointment(
                 request(LocalDateTime.now().plusDays(1), LocalDateTime.now().plusDays(1).plusHours(1)));
@@ -198,7 +248,7 @@ class AppointmentServiceTest {
         request.setEndTime(LocalDateTime.now().plusDays(2).plusHours(1));
 
         assertThrows(AccessDeniedException.class, () -> appointmentService.updateAppointment(appointmentId, request));
-        verify(appointmentRepository, never()).save(any(Appointment.class));
+        verify(appointmentRepository, never()).saveAndFlush(any(Appointment.class));
     }
 
     @Test
@@ -209,7 +259,7 @@ class AppointmentServiceTest {
         doThrow(new AccessDeniedException("denied")).when(accessControl).assertCanAccess(existing);
 
         assertThrows(AccessDeniedException.class, () -> appointmentService.cancelAppointment(appointmentId));
-        verify(appointmentRepository, never()).save(any(Appointment.class));
+        verify(appointmentRepository, never()).saveAndFlush(any(Appointment.class));
     }
 
     @Test
