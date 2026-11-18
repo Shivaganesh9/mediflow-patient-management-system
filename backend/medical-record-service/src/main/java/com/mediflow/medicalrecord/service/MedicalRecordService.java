@@ -1,11 +1,15 @@
 package com.mediflow.medicalrecord.service;
 
 import com.mediflow.common.exception.ResourceNotFoundException;
+import com.mediflow.common.time.ClinicClock;
 import com.mediflow.medicalrecord.dto.CreateMedicalRecordRequest;
 import com.mediflow.medicalrecord.dto.UpdateMedicalRecordRequest;
 import com.mediflow.medicalrecord.entity.MedicalRecord;
+import com.mediflow.medicalrecord.entity.MedicalRecordHistory;
+import com.mediflow.medicalrecord.entity.MedicalRecordHistoryAction;
 import com.mediflow.medicalrecord.entity.MedicalRecordType;
 import com.mediflow.medicalrecord.event.MedicalRecordEventPublisher;
+import com.mediflow.medicalrecord.repository.MedicalRecordHistoryRepository;
 import com.mediflow.medicalrecord.repository.MedicalRecordRepository;
 import com.mediflow.medicalrecord.security.AccessControlService;
 import lombok.RequiredArgsConstructor;
@@ -16,18 +20,35 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
+/**
+ * Medical record creation, reading, updating and audit history.
+ *
+ * <p>Permissions are unchanged: patients read their own records, doctors read and write only the
+ * records they authored, administrators manage all records. An append-only history row is written in
+ * the same transaction as each change; it records the actor and the changed field names only, never
+ * the clinical values, so no second copy of sensitive data is created.</p>
+ *
+ * <p>Encounter dates are validated against the clinic clock: a record cannot document an encounter
+ * that has not happened yet.</p>
+ */
 @Service
 @RequiredArgsConstructor
 public class MedicalRecordService {
 
     private final MedicalRecordRepository medicalRecordRepository;
+    private final MedicalRecordHistoryRepository historyRepository;
     private final MedicalRecordEventPublisher eventPublisher;
     private final AccessControlService accessControl;
+    private final ClinicClock clinicClock;
 
     @Transactional
     public MedicalRecord createMedicalRecord(CreateMedicalRecordRequest request) {
+        validateEncounterDate(request.getEncounterDate());
+
         MedicalRecord medicalRecord = new MedicalRecord();
         medicalRecord.setPatientId(request.getPatientId());
         medicalRecord.setAppointmentId(request.getAppointmentId());
@@ -43,6 +64,7 @@ public class MedicalRecordService {
         medicalRecord.setCreatedBy(accessControl.currentUsername());
 
         medicalRecord = medicalRecordRepository.save(medicalRecord);
+        recordHistory(medicalRecord, MedicalRecordHistoryAction.CREATED, null);
         eventPublisher.publishMedicalRecordCreated(medicalRecord);
         return medicalRecord;
     }
@@ -53,6 +75,14 @@ public class MedicalRecordService {
                 .orElseThrow(() -> new ResourceNotFoundException("Medical record not found with id: " + recordId));
         accessControl.assertCanRead(medicalRecord);
         return medicalRecord;
+    }
+
+    @Transactional(readOnly = true)
+    public List<MedicalRecordHistory> getMedicalRecordHistory(UUID recordId) {
+        // Reuses the record read rules, so history is exposed exactly to the users who may read the
+        // record itself (and never to unrelated doctors, patients or non-clinical staff).
+        getMedicalRecord(recordId);
+        return historyRepository.findByRecordIdOrderByOccurredAtAscIdAsc(recordId);
     }
 
     @Transactional(readOnly = true)
@@ -79,6 +109,9 @@ public class MedicalRecordService {
                 && !accessControl.isAdmin()) {
             throw new AccessDeniedException("Only administrators can reassign a medical record to another patient");
         }
+
+        validateEncounterDate(request.getEncounterDate());
+        List<String> changedFields = changedFields(medicalRecord, request);
 
         if (request.getPatientId() != null) {
             medicalRecord.setPatientId(request.getPatientId());
@@ -110,8 +143,66 @@ public class MedicalRecordService {
         medicalRecord.setUpdatedBy(accessControl.currentUsername());
 
         medicalRecord = medicalRecordRepository.save(medicalRecord);
+        if (!changedFields.isEmpty()) {
+            recordHistory(medicalRecord, MedicalRecordHistoryAction.UPDATED,
+                    String.join(",", changedFields));
+        }
         eventPublisher.publishMedicalRecordUpdated(medicalRecord);
         return medicalRecord;
+    }
+
+    private List<String> changedFields(MedicalRecord record, UpdateMedicalRecordRequest request) {
+        List<String> changed = new ArrayList<>();
+        if (request.getPatientId() != null && !request.getPatientId().equals(record.getPatientId())) {
+            changed.add("patientId");
+        }
+        if (request.getAppointmentId() != null
+                && !request.getAppointmentId().equals(record.getAppointmentId())) {
+            changed.add("appointmentId");
+        }
+        if (request.getEncounterDate() != null
+                && !request.getEncounterDate().equals(record.getEncounterDate())) {
+            changed.add("encounterDate");
+        }
+        if (request.getChiefComplaint() != null
+                && !request.getChiefComplaint().equals(record.getChiefComplaint())) {
+            changed.add("chiefComplaint");
+        }
+        if (request.getDiagnosis() != null && !request.getDiagnosis().equals(record.getDiagnosis())) {
+            changed.add("diagnosis");
+        }
+        if (request.getTreatmentPlan() != null
+                && !request.getTreatmentPlan().equals(record.getTreatmentPlan())) {
+            changed.add("treatmentPlan");
+        }
+        if (request.getNotes() != null && !request.getNotes().equals(record.getNotes())) {
+            changed.add("notes");
+        }
+        if (request.getRecordType() != null && !request.getRecordType().equals(record.getRecordType())) {
+            changed.add("recordType");
+        }
+        if (request.getDoctorId() != null && !request.getDoctorId().equals(record.getDoctorId())) {
+            changed.add("doctorId");
+        }
+        return changed;
+    }
+
+    private void recordHistory(MedicalRecord medicalRecord, MedicalRecordHistoryAction action,
+                               String changedFields) {
+        MedicalRecordHistory history = new MedicalRecordHistory();
+        history.setRecordId(medicalRecord.getRecordId());
+        history.setAction(action);
+        history.setActor(accessControl.currentUsername());
+        history.setChangedFields(changedFields);
+        history.setOccurredAt(clinicClock.instant());
+        history.setCreatedBy(accessControl.currentUsername());
+        historyRepository.save(history);
+    }
+
+    private void validateEncounterDate(LocalDate encounterDate) {
+        if (encounterDate != null && encounterDate.isAfter(clinicClock.today())) {
+            throw new IllegalArgumentException("Encounter date cannot be in the future");
+        }
     }
 
     private UUID resolveDoctorId(UUID requestedDoctorId) {

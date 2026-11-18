@@ -7,6 +7,7 @@ import { doctorsApi } from '../api/doctors';
 import {
   APPOINTMENT_STATUSES,
   Appointment,
+  AppointmentHistoryEntry,
   AppointmentStatus,
   CreateAppointmentRequest,
   UpdateAppointmentRequest,
@@ -17,6 +18,8 @@ import { Pagination } from '../components/Pagination';
 import { Modal } from '../components/Modal';
 import { StatusPill } from '../components/StatusPill';
 import { displayName, formatDateTime, fromLocalDateTimeInput, shortId, toLocalDateTimeInput } from '../utils/format';
+
+const DAY_NAMES = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
 
 export function AppointmentsPage() {
   const { user, roles, hasRole } = useAuth();
@@ -29,6 +32,7 @@ export function AppointmentsPage() {
   const isPatient = roles.includes('PATIENT');
   const isDoctor = roles.includes('DOCTOR');
   const isStaff = hasRole('ADMIN', 'NURSE', 'BILLING_STAFF', 'SUPPORT');
+  const canClinical = hasRole('ADMIN', 'DOCTOR', 'NURSE');
 
   const scope = useMemo(
     () => ({
@@ -154,8 +158,8 @@ export function AppointmentsPage() {
                     appointment={appointment}
                     patientName={patientName(appointment.patientId)}
                     doctorName={doctorName(appointment.doctorId)}
-                    onRescheduled={() => list.reload()}
-                    onCancelled={() => list.reload()}
+                    canClinical={canClinical}
+                    onChanged={() => list.reload()}
                   />
                 ))}
               </tbody>
@@ -194,32 +198,42 @@ function AppointmentRow({
   appointment,
   patientName,
   doctorName,
-  onRescheduled,
-  onCancelled,
+  canClinical,
+  onChanged,
 }: {
   appointment: Appointment;
   patientName: string;
   doctorName: string;
-  onRescheduled: () => void;
-  onCancelled: () => void;
+  canClinical: boolean;
+  onChanged: () => void;
 }) {
   const [rescheduling, setRescheduling] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-  const canReschedule = appointment.status === 'SCHEDULED' || appointment.status === 'CONFIRMED';
+  const [showingHistory, setShowingHistory] = useState(false);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
 
-  const handleCancel = async () => {
-    if (!window.confirm(`Cancel this appointment (${appointment.reason})?`)) return;
-    setCancelling(true);
+  const mutable = appointment.status === 'SCHEDULED' || appointment.status === 'CONFIRMED';
+  const busy = pendingAction !== null;
+
+  const runTransition = async (label: string, prompt: string, action: () => Promise<unknown>) => {
+    if (!window.confirm(prompt)) return;
+    setPendingAction(label);
     try {
-      await appointmentsApi.cancel(appointment.appointmentId);
-      onCancelled();
+      await action();
+      onChanged();
     } catch (err) {
-      if (err instanceof ApiError) window.alert(err.message);
-      else window.alert('Unable to cancel appointment.');
+      window.alert(transitionErrorMessage(err));
+      // A rejected transition usually means the appointment moved on in another tab or by another
+      // user; refreshing keeps this row honest instead of leaving a stale action set.
+      onChanged();
     } finally {
-      setCancelling(false);
+      setPendingAction(null);
     }
   };
+
+  const handleCancel = () =>
+    runTransition('cancel', `Cancel this appointment (${appointment.reason})?`, () =>
+      appointmentsApi.cancel(appointment.appointmentId),
+    );
 
   return (
     <>
@@ -233,14 +247,73 @@ function AppointmentRow({
           <StatusPill status={appointment.status} />
         </td>
         <td className="row-actions">
-          {canReschedule ? (
-            <button className="btn small-btn" type="button" onClick={() => setRescheduling(true)}>
+          {appointment.status === 'SCHEDULED' ? (
+            <button
+              className="btn small-btn"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void runTransition('confirm', 'Confirm this appointment?', () =>
+                  appointmentsApi.confirm(appointment.appointmentId),
+                )
+              }
+            >
+              {pendingAction === 'confirm' ? '…' : 'Confirm'}
+            </button>
+          ) : null}
+          {canClinical && appointment.status === 'CONFIRMED' ? (
+            <button
+              className="btn small-btn"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void runTransition('start', 'Start this appointment now?', () =>
+                  appointmentsApi.start(appointment.appointmentId),
+                )
+              }
+            >
+              {pendingAction === 'start' ? '…' : 'Start'}
+            </button>
+          ) : null}
+          {canClinical && appointment.status === 'IN_PROGRESS' ? (
+            <button
+              className="btn small-btn"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void runTransition('complete', 'Mark this appointment as completed?', () =>
+                  appointmentsApi.complete(appointment.appointmentId),
+                )
+              }
+            >
+              {pendingAction === 'complete' ? '…' : 'Complete'}
+            </button>
+          ) : null}
+          {canClinical && (appointment.status === 'SCHEDULED' || appointment.status === 'CONFIRMED') ? (
+            <button
+              className="btn small-btn"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void runTransition('no-show', 'Mark this appointment as a no-show?', () =>
+                  appointmentsApi.noShow(appointment.appointmentId),
+                )
+              }
+            >
+              {pendingAction === 'no-show' ? '…' : 'No-show'}
+            </button>
+          ) : null}
+          <button className="btn small-btn" type="button" onClick={() => setShowingHistory(true)}>
+            History
+          </button>
+          {mutable ? (
+            <button className="btn small-btn" type="button" disabled={busy} onClick={() => setRescheduling(true)}>
               Reschedule
             </button>
           ) : null}
-          {appointment.status !== 'CANCELLED' ? (
-            <button className="btn small-btn" type="button" disabled={cancelling} onClick={() => void handleCancel()}>
-              {cancelling ? '…' : 'Cancel'}
+          {mutable ? (
+            <button className="btn small-btn" type="button" disabled={busy} onClick={() => void handleCancel()}>
+              {pendingAction === 'cancel' ? '…' : 'Cancel'}
             </button>
           ) : null}
         </td>
@@ -251,11 +324,60 @@ function AppointmentRow({
           onClose={() => setRescheduling(false)}
           onSaved={() => {
             setRescheduling(false);
-            onRescheduled();
+            onChanged();
           }}
         />
       ) : null}
+      {showingHistory ? (
+        <HistoryModal appointment={appointment} onClose={() => setShowingHistory(false)} />
+      ) : null}
     </>
+  );
+}
+
+function HistoryModal({ appointment, onClose }: { appointment: Appointment; onClose: () => void }) {
+  const history = useAsync(
+    () => appointmentsApi.history(appointment.appointmentId),
+    [appointment.appointmentId],
+  );
+
+  return (
+    <Modal title={`History — ${appointment.reason}`} onClose={onClose}>
+      {history.loading ? (
+        <LoadingState />
+      ) : history.error ? (
+        <ErrorState message={history.error} />
+      ) : history.data && history.data.length > 0 ? (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Action</th>
+              <th>Status</th>
+              <th>Actor</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.data.map((entry: AppointmentHistoryEntry) => (
+              <tr key={entry.historyId}>
+                <td>{formatDateTime(entry.occurredAt)}</td>
+                <td>
+                  <span className="pill">{entry.action.replace(/_/g, ' ')}</span>
+                  {entry.details ? <p className="form-hint">{entry.details}</p> : null}
+                </td>
+                <td>
+                  {entry.fromStatus ? `${entry.fromStatus.replace(/_/g, ' ')} → ` : ''}
+                  {entry.toStatus.replace(/_/g, ' ')}
+                </td>
+                <td>{entry.actor ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <EmptyState message="No history recorded for this appointment." />
+      )}
+    </Modal>
   );
 }
 
@@ -314,10 +436,10 @@ function CreateAppointmentModal({
     <Modal title="Schedule visit" onClose={onClose}>
       <form className="form" onSubmit={handleSubmit}>
         {isPatient ? (
-          <p className="muted">Booking as: {currentUserName ?? currentUserId}</p>
+          <p className="form-hint">Booking as: {currentUserName ?? currentUserId}</p>
         ) : null}
         {isDoctor ? (
-          <p className="muted">Booking as: {currentUserName ?? currentUserId}</p>
+          <p className="form-hint">Booking as: {currentUserName ?? currentUserId}</p>
         ) : null}
         {!isPatient ? (
           <label className="field">
@@ -345,6 +467,7 @@ function CreateAppointmentModal({
             </select>
           </label>
         ) : null}
+        <AvailabilityHint doctorId={form.doctorId} startTime={form.startTime} endTime={form.endTime} />
         <div className="form-grid">
           <label className="field">
             <span>Start *</span>
@@ -391,6 +514,88 @@ function CreateAppointmentModal({
   );
 }
 
+/**
+ * Shows the selected doctor's active working hours and approved leave before the request is sent.
+ * The appointment service still validates the slot; these hints only help the user pick a time that
+ * will be accepted.
+ */
+function AvailabilityHint({
+  doctorId,
+  startTime,
+  endTime,
+}: {
+  doctorId: string;
+  startTime: string;
+  endTime: string;
+}) {
+  const availability = useAsync(
+    () => (doctorId ? doctorsApi.availability.list(doctorId) : Promise.resolve([])),
+    [doctorId],
+  );
+  const leaves = useAsync(
+    () => (doctorId ? doctorsApi.leaves.list(doctorId) : Promise.resolve([])),
+    [doctorId],
+  );
+
+  if (!doctorId) return null;
+  if (availability.loading || leaves.loading) {
+    return <p className="form-hint">Checking the doctor&apos;s working hours…</p>;
+  }
+  if (availability.error) {
+    return <p className="form-hint">Working hours are unavailable: {availability.error}</p>;
+  }
+
+  const windows = availability.data ?? [];
+  if (windows.length === 0) {
+    return (
+      <p className="form-warning">
+        This doctor has no active working hours. Bookings will be rejected until availability is added.
+      </p>
+    );
+  }
+
+  const date = startTime.slice(0, 10);
+  const day = weekdayOf(date);
+  const dayWindows = day ? windows.filter((w) => w.dayOfWeek === day) : [];
+  const leave = date ? leaves.data?.find((l) => date >= l.startDate && date <= l.endDate) : undefined;
+
+  const windowLabel = (from: string, to: string) => `${from.slice(0, 5)}–${to.slice(0, 5)}`;
+  const daySummary = day
+    ? dayWindows.map((w) => windowLabel(w.startTime, w.endTime)).join(', ')
+    : '';
+
+  let message: string | null = null;
+  let warning = false;
+  if (leave) {
+    warning = true;
+    message = `Dr. is on leave ${leave.startDate} – ${leave.endDate}. Pick another date.`;
+  } else if (date && dayWindows.length === 0) {
+    warning = true;
+    message = `No working hours on ${day}. Pick another day.`;
+  } else if (date && startTime.length >= 16 && endTime.length >= 16) {
+    const start = startTime.slice(11, 16);
+    const end = endTime.slice(11, 16);
+    const fits = dayWindows.some(
+      (w) => start >= w.startTime.slice(0, 5) && end <= w.endTime.slice(0, 5),
+    );
+    if (!fits) {
+      warning = true;
+      message = `The selected time is outside the doctor's working hours (${daySummary}).`;
+    } else {
+      message = 'The selected time is within the doctor\u2019s working hours.';
+    }
+  }
+
+  return (
+    <div className="form-hint-block">
+      <p className="form-hint">
+        Working hours: {windows.map((w) => `${w.dayOfWeek.slice(0, 3)} ${windowLabel(w.startTime, w.endTime)}`).join(' · ')}
+      </p>
+      {message ? <p className={warning ? 'form-warning' : 'form-hint'}>{message}</p> : null}
+    </div>
+  );
+}
+
 function RescheduleModal({
   appointment,
   onClose,
@@ -433,6 +638,11 @@ function RescheduleModal({
   return (
     <Modal title="Reschedule appointment" onClose={onClose}>
       <form className="form" onSubmit={handleSubmit}>
+        <AvailabilityHint
+          doctorId={appointment.doctorId}
+          startTime={form.startTime}
+          endTime={form.endTime}
+        />
         <div className="form-grid">
           <label className="field">
             <span>Start *</span>
@@ -479,6 +689,12 @@ function RescheduleModal({
   );
 }
 
+function weekdayOf(date: string): string | null {
+  if (!date) return null;
+  const parsed = new Date(`${date}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : DAY_NAMES[parsed.getDay()];
+}
+
 /**
  * Turns an appointment API failure into a message the user can act on. A 409 means the doctor's
  * slot is already taken (or the appointment changed state), so point at the fix instead of
@@ -489,4 +705,13 @@ function appointmentErrorMessage(err: unknown, fallback: string): string {
     return err.status === 409 ? `${err.message}. Please choose a different time slot.` : err.message;
   }
   return fallback;
+}
+
+function transitionErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    return err.status === 409
+      ? `${err.message}. The appointment may have changed; the list will be refreshed.`
+      : err.message;
+  }
+  return 'Unable to update the appointment.';
 }

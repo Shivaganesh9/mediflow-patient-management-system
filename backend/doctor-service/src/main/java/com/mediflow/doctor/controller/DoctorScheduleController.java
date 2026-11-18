@@ -32,6 +32,27 @@ public class DoctorScheduleController {
         return ApiResponse.success(scheduleService.getAvailability(doctorId), "Availability retrieved successfully");
     }
 
+    @PutMapping("/availability/{availabilityId}")
+    public ApiResponse<DoctorAvailability> updateAvailability(@PathVariable UUID doctorId,
+                                                               @PathVariable UUID availabilityId,
+                                                               @Valid @RequestBody AvailabilityRequest request) {
+        return ApiResponse.success(
+                scheduleService.updateAvailability(doctorId, availabilityId, request),
+                "Availability updated successfully");
+    }
+
+    /**
+     * Retires a working window. Existing appointments are not affected; the window simply stops
+     * accepting new bookings.
+     */
+    @DeleteMapping("/availability/{availabilityId}")
+    public ApiResponse<DoctorAvailability> deactivateAvailability(@PathVariable UUID doctorId,
+                                                                  @PathVariable UUID availabilityId) {
+        return ApiResponse.success(
+                scheduleService.deactivateAvailability(doctorId, availabilityId),
+                "Availability deactivated successfully");
+    }
+
     @PostMapping("/leaves")
     @ResponseStatus(HttpStatus.CREATED)
     public ApiResponse<DoctorLeave> addLeave(@PathVariable UUID doctorId,
@@ -42,5 +63,22 @@ public class DoctorScheduleController {
     @GetMapping("/leaves")
     public ApiResponse<List<DoctorLeave>> getLeaves(@PathVariable UUID doctorId) {
         return ApiResponse.success(scheduleService.getLeaves(doctorId), "Leaves retrieved successfully");
+    }
+
+    @PutMapping("/leaves/{leaveId}")
+    public ApiResponse<DoctorLeave> updateLeave(@PathVariable UUID doctorId,
+                                                @PathVariable UUID leaveId,
+                                                @Valid @RequestBody LeaveRequest request) {
+        return ApiResponse.success(
+                scheduleService.updateLeave(doctorId, leaveId, request),
+                "Leave updated successfully");
+    }
+
+    @DeleteMapping("/leaves/{leaveId}")
+    public ApiResponse<DoctorLeave> cancelLeave(@PathVariable UUID doctorId,
+                                                @PathVariable UUID leaveId) {
+        return ApiResponse.success(
+                scheduleService.cancelLeave(doctorId, leaveId),
+                "Leave cancelled successfully");
     }
 }

@@ -1,5 +1,6 @@
 package com.mediflow.appointment.controller;
 
+import com.mediflow.appointment.dto.AppointmentHistoryResponse;
 import com.mediflow.appointment.dto.AppointmentResponse;
 import com.mediflow.appointment.dto.CreateAppointmentRequest;
 import com.mediflow.appointment.dto.UpdateAppointmentRequest;
@@ -17,6 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -56,12 +58,51 @@ public class AppointmentController {
                 "Appointment retrieved successfully");
     }
 
+    @GetMapping("/{appointmentId}/history")
+    public ApiResponse<List<AppointmentHistoryResponse>> getAppointmentHistory(
+            @PathVariable UUID appointmentId) {
+        List<AppointmentHistoryResponse> history = appointmentService
+                .getAppointmentHistory(appointmentId)
+                .stream()
+                .map(appointmentMapper::toHistoryResponse)
+                .toList();
+        return ApiResponse.success(history, "Appointment history retrieved successfully");
+    }
+
     @PutMapping("/{appointmentId}")
     public ApiResponse<AppointmentResponse> updateAppointment(@PathVariable UUID appointmentId,
                                                               @Valid @RequestBody UpdateAppointmentRequest request) {
         return ApiResponse.success(
                 appointmentMapper.toResponse(appointmentService.updateAppointment(appointmentId, request)),
                 "Appointment updated successfully");
+    }
+
+    @PatchMapping("/{appointmentId}/confirm")
+    public ApiResponse<AppointmentResponse> confirmAppointment(@PathVariable UUID appointmentId) {
+        return ApiResponse.success(
+                appointmentMapper.toResponse(appointmentService.confirmAppointment(appointmentId)),
+                "Appointment confirmed successfully");
+    }
+
+    @PatchMapping("/{appointmentId}/start")
+    public ApiResponse<AppointmentResponse> startAppointment(@PathVariable UUID appointmentId) {
+        return ApiResponse.success(
+                appointmentMapper.toResponse(appointmentService.startAppointment(appointmentId)),
+                "Appointment started successfully");
+    }
+
+    @PatchMapping("/{appointmentId}/complete")
+    public ApiResponse<AppointmentResponse> completeAppointment(@PathVariable UUID appointmentId) {
+        return ApiResponse.success(
+                appointmentMapper.toResponse(appointmentService.completeAppointment(appointmentId)),
+                "Appointment completed successfully");
+    }
+
+    @PatchMapping("/{appointmentId}/no-show")
+    public ApiResponse<AppointmentResponse> markNoShow(@PathVariable UUID appointmentId) {
+        return ApiResponse.success(
+                appointmentMapper.toResponse(appointmentService.markNoShow(appointmentId)),
+                "Appointment marked as a no-show");
     }
 
     @PatchMapping("/{appointmentId}/cancel")

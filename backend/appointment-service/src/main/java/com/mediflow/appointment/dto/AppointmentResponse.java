@@ -22,5 +22,7 @@ public class AppointmentResponse {
     String appointmentType;
     Instant createdAt;
     Instant updatedAt;
+    String createdBy;
+    String updatedBy;
     Long version;
 }

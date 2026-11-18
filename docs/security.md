@@ -96,8 +96,11 @@ The dev-only `seed` profile creates one deterministic account per role (`admin`,
 | Doctor profile create/update | yes | own only | no | no | no | no |
 | Doctor profile read / search | all | own profile only (search open) | all (search) | all | all | all |
 | Doctor availability/leave write | yes | own only | no | no | no | no |
-| Appointment read/write/cancel | all | own only | own only | all | all | all |
+| Appointment read/reschedule/cancel | all | own only | own only | all | all | all |
+| Appointment confirm | all | own only | own only | all | all | all |
+| Appointment start/complete/no-show | all | own only | no | yes | no | no |
 | Medical record read | all | own records | own records | **no** | **no** | **no** |
+| Medical record audit history read | all | own records | own records | **no** | **no** | **no** |
 | Medical record create/update | all | own records | no | no | no | no |
 | Medical record reassign `patientId` | yes | no (403) | no | no | no | no |
 | Invoice/payment read | all | all | own only | all | all | all |
@@ -114,7 +117,7 @@ Any authenticated principal whose role is not in the relevant allow-list is deni
 |---|---|
 | auth | `/register`, `/login`, `/refresh`, `/password-reset/**` public; `/api/v1/auth/users/**` → ADMIN; everything else authenticated |
 | patient | DELETE `/api/v1/patients/**` → ADMIN; POST → ADMIN, PATIENT, DOCTOR; PUT → ADMIN, DOCTOR; GET → authenticated (PATIENT list/search scoped to own profile) |
-| doctor | POST/PUT `/api/v1/doctors/**` (including availability/leave writes) → ADMIN, DOCTOR (DOCTOR own profile only); GET → authenticated |
+| doctor | POST/PUT/DELETE `/api/v1/doctors/**` (including availability/leave writes) → ADMIN, DOCTOR (DOCTOR own profile only); GET → authenticated |
 | medical-record | POST `/api/v1/medical-records` and PUT `/api/v1/medical-records/*` → ADMIN, DOCTOR (DOCTOR own records only); GET → authenticated but service-level ownership denies NURSE/BILLING_STAFF/SUPPORT (403) |
 | billing | invoice/payment writes → ADMIN, BILLING_STAFF; reads → explicit set ADMIN, BILLING_STAFF, DOCTOR, NURSE, SUPPORT (PATIENT scoped to own invoices; unknown roles → 403) |
 | appointment | all → authenticated; PATIENT/DOCTOR scoped to own identity, staff (ADMIN/NURSE/BILLING_STAFF/SUPPORT) broad, unknown roles → 403 |
@@ -130,7 +133,8 @@ The JWT `uid` (Auth `User.id`) is compared to stored business ids.
 - **Patients:** `Patient.patientId == uid`. A PATIENT can only access/list their own profile; authenticated staff/doctor/admin may read profiles, while updates are restricted to ADMIN/DOCTOR by the endpoint matcher. Patient creation by a PATIENT is forced to their own uid; deleting a profile is ADMIN-only.
 - **Doctors:** `Doctor.doctorId == uid`. A DOCTOR can only access/update their own profile and schedule; discovery/search is unaffected (any authenticated caller can search). Creation by a DOCTOR is forced to their own uid.
 - **Medical records:** `MedicalRecord.doctorId == uid` for doctors; PATIENT read access requires `MedicalRecord.patientId == uid`; admin bypass. Search is scoped (`scopedPatientId`/`scopedDoctorId`) so a doctor only sees their own records and a patient only their own. NURSE/BILLING_STAFF/SUPPORT and unknown roles are denied. Non-ADMIN updates may not change `patientId` (403): only an administrator can correct a record assigned to the wrong patient.
-- **Appointments:** enforced at the service layer by `AccessControlService`. A PATIENT is scoped to their own `patientId` and a DOCTOR to their own `doctorId` on create, list, get, reschedule, and cancel (a forced foreign identity returns 403); staff (ADMIN/NURSE/BILLING_STAFF/SUPPORT) have broad access.
+- **Appointments:** enforced at the service layer by `AccessControlService`. A PATIENT is scoped to their own `patientId` and a DOCTOR to their own `doctorId` on create, list, get, history, reschedule, and cancel (a forced foreign identity returns 403); staff (ADMIN/NURSE/BILLING_STAFF/SUPPORT) have broad access. Confirm is available to any caller who can access the appointment; start/complete/no-show additionally require a clinical role (`ADMIN`, `DOCTOR`, `NURSE`). History uses the same access rules as the appointment itself.
+- **Medical-record audit history:** `GET /api/v1/medical-records/{recordId}/history` reuses the record read rules, so a patient sees only their own record history, a doctor only records they authored, and NURSE/BILLING_STAFF/SUPPORT receive 403.
 - **Invoices:** read access enforced at the service layer by `AccessControlService`. A PATIENT can only list/view/inspect payments on their own invoices (a forced foreign `patientId` on the list returns 403). Organisation-wide reads are limited to the explicit set ADMIN/BILLING_STAFF/DOCTOR/NURSE/SUPPORT; any other authenticated role is denied in both `canRead` and `scopedPatientId` rather than falling through. Invoice/payment writes remain ADMIN/BILLING_STAFF only (other roles receive 403 at the endpoint matcher).
 - **Notifications:** list/unread-count are scoped to `recipient_id == uid`; marking a notification read is owner-only (ADMIN bypass) and a foreign id returns 403/404 without leaking existence.
 

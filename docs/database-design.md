@@ -1,11 +1,11 @@
 # MediFlow Database Design
 
-*Status: reflects the implemented codebase (2026-08-14). Schema is defined by Flyway migrations; `ddl-auto: validate`.*
+*Status: reflects the implemented codebase (2026-11-17, Milestone 6). Schema is defined by Flyway migrations; `ddl-auto: validate`.*
 
 ## 1. Strategy
 
 - Each service owns its tables (per-service default DBs in yml; the checked-in `.env` does not set `DB_URL`, so per-service DBs are used by default — setting `DB_URL` points all services at one shared `mediflow` DB if desired).
-- Migrations: numbered `V*__*.sql` under each service's `src/main/resources/db/migration/` (appointment/billing up to `V5`, medical-record/doctor/patient/auth up to `V4`/`V2`/`V2`/`V3`; analytics scoped separately). Migrations are append-only and additive.
+- Migrations: numbered `V*__*.sql` under each service's `src/main/resources/db/migration/` (appointment/billing up to `V7`, medical-record up to `V5`, doctor/patient/auth up to `V2`/`V2`/`V3`; analytics scoped separately). Migrations are append-only and additive.
 - Every table inherits audit columns from `common-library` `BaseEntity`: `created_at`, `updated_at`, `created_by`, `updated_by`, `deleted_at` (soft delete), plus a UUID surrogate `id` primary key.
 - Business entities expose a second immutable UUID business id (`patient_id`, `doctor_id`, `appointment_id`, ...) that is unique and stable.
 
@@ -26,8 +26,8 @@
 ## 4. Doctor Service (doctor-service)
 
 - `doctors` (V1, V2): `doctor_id` UUID UNIQUE, `first_name`, `last_name`, `email` UNIQUE, `phone`, `specialty`, `years_of_experience`; V2 adds `department` NOT NULL (default GENERAL), `qualification`, `consultation_fee` NUMERIC(12,2) NOT NULL, `version`.
-- `doctor_availability` (V2): `availability_id` UUID UNIQUE, `doctor_id`, `day_of_week`, `start_time` TIME, `end_time` TIME, `active`. Index `(doctor_id, day_of_week)`.
-- `doctor_leaves` (V2): `leave_id` UUID UNIQUE, `doctor_id`, `start_date` DATE, `end_date` DATE, `reason`. Index `(doctor_id, start_date, end_date)`.
+- `doctor_availability` (V2): `availability_id` UUID UNIQUE, `doctor_id`, `day_of_week`, `start_time` TIME, `end_time` TIME, `active`. Index `(doctor_id, day_of_week)`. Deactivation sets `active = false` (soft retire); windows are listed only while active and not soft-deleted.
+- `doctor_leaves` (V2): `leave_id` UUID UNIQUE, `doctor_id`, `start_date` DATE, `end_date` DATE, `reason`. Index `(doctor_id, start_date, end_date)`. Leave cancellation sets `deleted_at`, so the cancelled period remains auditable. Active leaves for the same doctor may not overlap (application rule → 409).
 
 ## 5. Appointment Service (appointment-service)
 
@@ -40,6 +40,7 @@
   - `ex_appointments_patient_slot`: the same exclusion shape on `patient_id`, so a patient cannot be booked into two places at once either (the application pre-check covers this, but only the database closes the concurrent race).
   - The migration is non-destructive: a pre-flight `DO` block raises an actionable exception (with counts) if existing rows have `end_time <= start_time`, overlapping active appointments for the same doctor, or overlapping active appointments for the same patient, instead of rewriting data. See `docs/runbook.md`.
   - A violation surfaces as SQLSTATE `23P01`; the service translates it to HTTP 409 with a message naming the doctor or patient conflict.
+- `appointment_history` (V7): append-only audit trail. `history_id` UUID UNIQUE, `appointment_id`, `action` (CREATED/RESCHEDULED/CONFIRMED/STARTED/COMPLETED/CANCELLED/NO_SHOW), `from_status` (nullable), `to_status`, `actor` (authenticated username), `details` (1000; scheduling context such as the previous slot — no clinical data), `occurred_at` TIMESTAMPTZ, plus BaseEntity audit columns. Index `(appointment_id, occurred_at)`. Rows are written in the same transaction as the appointment change.
 - `outbox_events` (V4) — see §10.
 
 ## 6. Medical Record Service (medical-record-service)
@@ -47,6 +48,7 @@
 - `medical_records` (V1, V2): `record_id` UUID UNIQUE, `patient_id`, `appointment_id` (nullable), `encounter_date`, `chief_complaint` (500), `notes` (10000); V2 adds `doctor_id`, `record_type` (default CONSULTATION), `diagnosis`, `treatment_plan`, `version`.
 - `record_type` values: CONSULTATION, FOLLOW_UP, DIAGNOSIS, LAB_REPORT, PROCEDURE, OTHER.
 - Indexes: `patient_id`, `encounter_date`, `doctor_id`; V4 adds composite `(patient_id, encounter_date)`, `(doctor_id, encounter_date)`.
+- `medical_record_history` (V5): append-only, metadata-only audit trail. `history_id` UUID UNIQUE, `record_id`, `action` (CREATED/UPDATED), `actor`, `changed_fields` (500; comma-separated **field names** only — never clinical values), `occurred_at`, plus BaseEntity audit columns. Index `(record_id, occurred_at)`. A no-op update writes no row.
 - `outbox_events` (V3) — see §10.
 
 ## 7. Billing Service (billing-service)

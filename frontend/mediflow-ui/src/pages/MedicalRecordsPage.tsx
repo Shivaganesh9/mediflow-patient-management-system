@@ -7,6 +7,7 @@ import { doctorsApi } from '../api/doctors';
 import {
   CreateMedicalRecordRequest,
   MedicalRecord,
+  MedicalRecordHistoryEntry,
   MEDICAL_RECORD_TYPES,
   MedicalRecordType,
   UpdateMedicalRecordRequest,
@@ -15,7 +16,7 @@ import { ApiError } from '../types/common';
 import { LoadingState, ErrorState, EmptyState } from '../components/PageState';
 import { Pagination } from '../components/Pagination';
 import { Modal } from '../components/Modal';
-import { displayName, formatDate, shortId } from '../utils/format';
+import { displayName, formatDate, formatDateTime, shortId } from '../utils/format';
 
 export function MedicalRecordsPage() {
   const { user, roles, hasRole } = useAuth();
@@ -169,6 +170,7 @@ function RecordRow({
   onSaved: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [showingHistory, setShowingHistory] = useState(false);
 
   return (
     <>
@@ -181,6 +183,9 @@ function RecordRow({
         <td>{doctorName}</td>
         <td>{record.chiefComplaint}</td>
         <td className="row-actions">
+          <button className="btn small-btn" type="button" onClick={() => setShowingHistory(true)}>
+            History
+          </button>
           {canEdit ? (
             <button className="btn small-btn" type="button" onClick={() => setEditing(true)}>
               Edit
@@ -198,7 +203,55 @@ function RecordRow({
           }}
         />
       ) : null}
+      {showingHistory ? (
+        <RecordHistoryModal record={record} onClose={() => setShowingHistory(false)} />
+      ) : null}
     </>
+  );
+}
+
+function RecordHistoryModal({ record, onClose }: { record: MedicalRecord; onClose: () => void }) {
+  const history = useAsync(() => medicalRecordsApi.history(record.recordId), [record.recordId]);
+
+  return (
+    <Modal title={`Audit history — ${record.chiefComplaint}`} onClose={onClose}>
+      {history.loading ? (
+        <LoadingState />
+      ) : history.error ? (
+        <ErrorState message={history.error} />
+      ) : history.data && history.data.length > 0 ? (
+        <>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Action</th>
+                <th>Changed fields</th>
+                <th>Actor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.data.map((entry: MedicalRecordHistoryEntry) => (
+                <tr key={entry.historyId}>
+                  <td>{formatDateTime(entry.occurredAt)}</td>
+                  <td>
+                    <span className="pill">{entry.action}</span>
+                  </td>
+                  <td>{entry.changedFields ? entry.changedFields.replace(/,/g, ', ') : '—'}</td>
+                  <td>{entry.actor ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="form-hint">
+            The audit trail records who changed which fields. Clinical values are intentionally not
+            duplicated here.
+          </p>
+        </>
+      ) : (
+        <EmptyState message="No audit history recorded for this record." />
+      )}
+    </Modal>
   );
 }
 

@@ -75,6 +75,17 @@ jwt:
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
 
+# Doctor schedules are owned by doctor-service. Booking and rescheduling validate the requested
+# slot synchronously; the call fails closed (503) if the schedule cannot be checked.
+services:
+  doctor-service-url: ${DOCTOR_SERVICE_URL:http://localhost:8085}
+  doctor-service-connect-timeout-ms: ${DOCTOR_SERVICE_CONNECT_TIMEOUT_MS:1000}
+  doctor-service-read-timeout-ms: ${DOCTOR_SERVICE_READ_TIMEOUT_MS:3000}
+
+# Local appointment times are interpreted in the clinic's zone (past-slot checks, audit stamps).
+clinic:
+  time-zone: ${CLINIC_TIME_ZONE:UTC}
+
 eureka:
   client:
     service-url:

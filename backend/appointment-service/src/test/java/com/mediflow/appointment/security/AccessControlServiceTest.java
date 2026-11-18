@@ -124,6 +124,24 @@ class AccessControlServiceTest {
     }
 
     @Test
+    void clinicalRolesMayChangeClinicalState() {
+        for (String role : List.of("ADMIN", "DOCTOR", "NURSE")) {
+            authenticate(role.toLowerCase(), UUID.randomUUID(), List.of(role));
+            assertTrue(accessControl.hasClinicalAccess(), role + " should be clinical");
+            accessControl.assertClinicalAccess();
+        }
+    }
+
+    @Test
+    void nonClinicalStaffMayNotChangeClinicalState() {
+        for (String role : List.of("BILLING_STAFF", "SUPPORT", "PATIENT")) {
+            authenticate(role.toLowerCase(), UUID.randomUUID(), List.of(role));
+            assertFalse(accessControl.hasClinicalAccess(), role + " should not be clinical");
+            assertThrows(AccessDeniedException.class, accessControl::assertClinicalAccess);
+        }
+    }
+
+    @Test
     void currentUserIdIsEmptyWithoutAuthentication() {
         assertNull(accessControl.currentUserId());
         assertNull(accessControl.currentUsername());

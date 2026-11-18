@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAsync } from '../hooks/useAsync';
 import { notificationsApi } from '../api/notifications';
-import { Notification } from '../types/notification';
+import { Notification, NotificationType } from '../types/notification';
 import { ApiError } from '../types/common';
 import { LoadingState, ErrorState, EmptyState } from '../components/PageState';
 import { Pagination } from '../components/Pagination';
@@ -58,12 +59,11 @@ export function NotificationsPage() {
             <div className="stack-list">
               {list.data.content.map((notification) => {
                 const read = isRead(notification);
+                const related = relatedWorkflow(notification.notificationType);
                 return (
-                  <button
+                  <div
                     key={notification.notificationId}
-                    type="button"
                     className={`list-item notification-item ${read ? 'notification-read' : ''}`}
-                    onClick={() => void markRead(notification)}
                   >
                     <div>
                       <strong>{notification.subject}</strong>
@@ -72,8 +72,22 @@ export function NotificationsPage() {
                     <div className="muted">
                       <span>{notification.notificationType.replace(/_/g, ' ')}</span>
                       <span>{formatDateTime(notification.createdAt)}</span>
+                      <div className="row-actions">
+                        <Link
+                          className="btn small-btn"
+                          to={related.to}
+                          onClick={() => void markRead(notification)}
+                        >
+                          {related.label}
+                        </Link>
+                        {read ? null : (
+                          <button className="btn small-btn" type="button" onClick={() => void markRead(notification)}>
+                            Mark read
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -91,4 +105,18 @@ export function NotificationsPage() {
       </section>
     </div>
   );
+}
+
+/**
+ * Maps an event type to the workflow it belongs to. Notification rows do not carry the related
+ * aggregate id, so the link opens the list where the user can find the appointment or invoice.
+ */
+function relatedWorkflow(type: NotificationType): { to: string; label: string } {
+  if (type.startsWith('APPOINTMENT')) {
+    return { to: '/appointments', label: 'Open appointments' };
+  }
+  if (type.startsWith('INVOICE') || type.startsWith('PAYMENT')) {
+    return { to: '/billing', label: 'Open billing' };
+  }
+  return { to: '/notifications', label: 'Open' };
 }

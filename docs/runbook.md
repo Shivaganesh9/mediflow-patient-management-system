@@ -66,6 +66,16 @@ All have safe defaults except `JWT_SECRET`, which is required. Template values l
 | `AUTH_PASSWORD_RESET_TOKEN_TTL` | `30m` | auth-service | password-reset token lifetime |
 | `AUTH_PASSWORD_RESET_EXPOSE_TOKEN` | `false` | auth-service | return the raw reset token in the response (dev/test only; there is no mail delivery) |
 | `AUTH_SERVICE_URL` | `http://localhost:8081` | patient/doctor | internal identity lookup for profile validation |
+| `DOCTOR_SERVICE_URL` | `http://localhost:8085` | appointment | internal schedule validation (working hours + leave) |
+| `CLINIC_TIME_ZONE` | `UTC` | appointment/medical-record | clinic zone for past-slot, encounter-date and audit checks — keep identical everywhere |
+
+### 1.2 Doctor schedule validation dependency
+
+appointment-service validates every booking/reschedule against doctor-service
+(`GET /internal/doctors/{doctorId}/schedule/validation`). The call forwards the caller's bearer token and
+`X-Correlation-ID`, uses 1s connect / 3s read timeouts, no retries, and a 5-failure/30s circuit breaker.
+It **fails closed**: if doctor-service is down or returns 5xx, booking returns **503** rather than
+skipping the working-hours/leave rules. Start doctor-service before exercising booking flows.
 
 ## 2. Start backend services
 
@@ -456,6 +466,34 @@ Bring up Postgres + Kafka (`docker compose up -d`), then start all 9 services wi
    value from the invoice-generated event — payment events only insert `payment_facts`).
 8. `GET /api/v1/analytics/dashboard/summary` (admin) shows the updated totals.
 
+### 11.6 Healthcare workflow verification (Milestone 6, verified 2026-11-18)
+
+With auth, doctor, appointment and medical-record services up (Postgres + Redis; Kafka optional for the
+workflow itself), seeding `dev,seed`, this sequence was executed end to end and passed 43/43 checks
+(recorded in `target-m6-e2e.log`):
+
+1. **Schedule management (doctor token, own profile):** `POST`/`PUT`/`DELETE` availability and leaves.
+   An overlapping same-day window returns 409, adjacent windows are accepted, and a deactivated window
+   disappears from `GET /availability`. Overlapping leaves return 409; `DELETE` cancels a leave.
+2. **Booking enforcement (patient token):** booking inside an approved leave returns 409
+   (`The doctor is on leave on …`), outside working hours returns 409
+   (`… outside the doctor's working hours …`), and a doctor with no window that weekday returns 409
+   (`The doctor has no working hours configured for …`). Cancel the leave, rebook → 201. A duplicate
+   slot is 409.
+3. **Lifecycle (patient/doctor tokens):** confirm as the patient → `CONFIRMED`; repeating confirm → 409;
+   start as the patient → 403; start as the doctor → `IN_PROGRESS`; complete as the patient → 403;
+   complete as the doctor → `COMPLETED`; no-show on a completed appointment → 409.
+4. **Appointment history:** `GET /appointments/{id}/history` returns `CREATED, CONFIRMED, STARTED,
+   COMPLETED` with the acting usernames; another patient's appointment history returns 403.
+5. **Medical records (doctor token):** a future `encounterDate` returns 400; create + update succeed;
+   `GET /medical-records/{id}/history` shows `CREATED` then `UPDATED` with changed field names only;
+   the nurse role gets 403 while the owning patient can read the history.
+
+For a Docker-only environment the run used a disposable PostgreSQL 16 container; the checked-in compose
+stack exposes the same schema via `infrastructure/docker/postgres/init-databases.sql`. Remember
+`-Duser.timezone=UTC` when launching the jars on a host whose default zone is an alias PostgreSQL does
+not accept (e.g. `Asia/Calcutta`).
+
 ## 12. Run the full automated test suite
 
 ```bash
@@ -610,6 +648,8 @@ CI runs all of this automatically via `.github/workflows/ci.yml` (backend `mvn v
 
 `patient-service`/`doctor-service` validate `userId` references through auth-service. The verifier uses a 1s connect/3s read timeout, no retries, and a circuit breaker (5 consecutive transport/5xx failures → open for 30s). While open, profile writes that need verification fail fast with **503**; reads are unaffected. Fix auth-service; the breaker closes automatically on the next successful probe after the 30s window.
 
+The same pattern applies to appointment-service → doctor-service schedule validation (see §16.9).
+
 ### 16.5 Appointment slot constraint remediation
 
 `V6__add_appointment_slot_exclusion.sql` installs `btree_gist` and the `ex_appointments_doctor_slot`
@@ -759,3 +799,77 @@ SELECT pe.event_id, pe.event_type
 A non-empty result is an incident, not a repair instruction: fix the cause (outbox `DEAD` rows,
 DLQ drain, broker outage) and replay via the outbox/DLQ procedures in §16.1. Consumers deduplicate,
 so replay cannot create duplicate notifications or analytics facts.
+
+### 16.9 Doctor schedule, lifecycle and audit incidents
+
+**Booking returns 503.** doctor-service is unreachable or its breaker is open. Check
+`/actuator/health` on 8085, the doctor-service logs, and `DOCTOR_SERVICE_URL`. Booking fails closed on
+purpose; do not bypass the check by writing appointments directly.
+
+**Booking returns 409 "no working hours configured for …".** Add an active window for that weekday
+(`POST /api/v1/doctors/{doctorId}/availability`) or choose another day. A window must contain the whole
+slot, and windows on the same day may be adjacent but not overlapping.
+
+**Booking returns 409 "The doctor is on leave on …".** Expected: leaves are treated as approved as soon
+as they are created. Edit (`PUT .../leaves/{leaveId}`) or cancel (`DELETE .../leaves/{leaveId}`) the
+leave, or pick another date.
+
+**Availability/leave mutations return 409.** Active windows on the same day overlap, or active leave
+periods overlap. Adjacent windows (09:00–12:00, 12:00–17:00) are allowed. Fix the existing rows through
+the API rather than deleting history.
+
+**Appointment transition returns 409.** The appointment already moved (another user/tab, or the
+transition is not valid from the current status). Reload the list; `GET /api/v1/appointments/{id}/history`
+shows what happened and who did it. Start/complete/no-show also require ADMIN/DOCTOR/NURSE (403 for other
+roles).
+
+**Audit tables.** `appointment_history` and `medical_record_history` are append-only and are written in
+the same transaction as the change they describe; never delete or rewrite rows. Medical-record history
+stores only changed **field names**, so it cannot be used to recover an old clinical value — restore from
+backup if a value was overwritten. `clinic.time-zone` should be identical for appointment-service and
+medical-record-service; changing it shifts what "today"/"now" mean for new checks but does not rewrite
+stored times.
+
+```sql
+-- appointment_db: latest history row disagrees with the appointment's current status
+SELECT a.appointment_id, a.status, h.to_status AS last_history_status, h.occurred_at
+  FROM appointments a
+  LEFT JOIN LATERAL (
+      SELECT to_status, occurred_at
+        FROM appointment_history
+       WHERE appointment_id = a.appointment_id
+       ORDER BY occurred_at DESC, id DESC
+       LIMIT 1
+  ) h ON true
+ WHERE h.to_status IS DISTINCT FROM a.status;
+
+-- appointment_db: appointments with no history at all (expected only for pre-V7 rows)
+SELECT a.appointment_id, a.created_at
+  FROM appointments a
+ WHERE NOT EXISTS (
+       SELECT 1 FROM appointment_history h WHERE h.appointment_id = a.appointment_id);
+
+-- doctor_db: active overlapping windows on the same day (should be empty; the API prevents this)
+SELECT a.availability_id, b.availability_id, a.doctor_id, a.day_of_week
+  FROM doctor_availability a
+  JOIN doctor_availability b
+    ON a.doctor_id = b.doctor_id
+   AND a.day_of_week = b.day_of_week
+   AND a.id < b.id
+ WHERE a.active AND b.active
+   AND a.deleted_at IS NULL AND b.deleted_at IS NULL
+   AND a.start_time < b.end_time
+   AND b.start_time < a.end_time;
+
+-- doctor_db: active leaves that overlap (should be empty; the API prevents this)
+SELECT a.leave_id, b.leave_id, a.doctor_id, a.start_date, a.end_date, b.start_date, b.end_date
+  FROM doctor_leaves a
+  JOIN doctor_leaves b
+    ON a.doctor_id = b.doctor_id
+   AND a.id < b.id
+ WHERE a.deleted_at IS NULL AND b.deleted_at IS NULL
+   AND a.start_date <= b.end_date
+   AND b.start_date <= a.end_date;
+```
+
+Pre-V7 appointments have no `CREATED` history row; that is expected and not backfilled automatically.

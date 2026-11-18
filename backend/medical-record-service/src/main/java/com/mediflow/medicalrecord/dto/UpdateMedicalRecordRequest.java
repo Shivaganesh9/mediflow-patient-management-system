@@ -1,6 +1,7 @@
 package com.mediflow.medicalrecord.dto;
 
 import com.mediflow.medicalrecord.entity.MedicalRecordType;
+import jakarta.validation.constraints.PastOrPresent;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -16,6 +17,7 @@ public class UpdateMedicalRecordRequest {
 
     private UUID doctorId;
 
+    @PastOrPresent
     private LocalDate encounterDate;
 
     @Size(max = 500)

@@ -2,6 +2,7 @@ package com.mediflow.medicalrecord.controller;
 
 import com.mediflow.common.response.ApiResponse;
 import com.mediflow.medicalrecord.dto.CreateMedicalRecordRequest;
+import com.mediflow.medicalrecord.dto.MedicalRecordHistoryResponse;
 import com.mediflow.medicalrecord.dto.MedicalRecordResponse;
 import com.mediflow.medicalrecord.dto.UpdateMedicalRecordRequest;
 import com.mediflow.medicalrecord.entity.MedicalRecordType;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -63,6 +65,17 @@ public class MedicalRecordController {
         return ApiResponse.success(
                 medicalRecordMapper.toResponse(medicalRecordService.getMedicalRecord(recordId)),
                 "Medical record retrieved successfully");
+    }
+
+    @GetMapping("/{recordId}/history")
+    public ApiResponse<List<MedicalRecordHistoryResponse>> getMedicalRecordHistory(
+            @PathVariable UUID recordId) {
+        List<MedicalRecordHistoryResponse> history = medicalRecordService
+                .getMedicalRecordHistory(recordId)
+                .stream()
+                .map(medicalRecordMapper::toHistoryResponse)
+                .toList();
+        return ApiResponse.success(history, "Medical record history retrieved successfully");
     }
 
     @PutMapping("/{recordId}")

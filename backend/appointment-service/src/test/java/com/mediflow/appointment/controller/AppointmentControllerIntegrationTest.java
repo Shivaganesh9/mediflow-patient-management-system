@@ -3,6 +3,9 @@ package com.mediflow.appointment.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mediflow.appointment.event.AppointmentEventPublisher;
+import com.mediflow.appointment.schedule.DoctorScheduleValidator;
+import com.mediflow.common.exception.ConflictException;
+import com.mediflow.common.exception.ServiceUnavailableException;
 import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -11,8 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -21,6 +24,8 @@ import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -40,8 +45,11 @@ class AppointmentControllerIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @MockBean
+    @MockitoBean
     private AppointmentEventPublisher eventPublisher;
+
+    @MockitoBean
+    private DoctorScheduleValidator doctorScheduleValidator;
 
     private UUID doctorId;
     private String doctorToken;
@@ -333,12 +341,138 @@ class AppointmentControllerIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void rejectsPastAppointmentSlot() throws Exception {
+        String payload = appointmentPayload(UUID.randomUUID(), doctorId, "2020-01-01T10:00:00", "2020-01-01T11:00:00");
+
+        mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void rejectsBookingOutsideDoctorWorkingHours() throws Exception {
+        doThrow(new ConflictException("The requested slot is outside the doctor's working hours (09:00-17:00)"))
+                .when(doctorScheduleValidator).validateSlot(any(), any(), any());
+
+        mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(appointmentPayload(UUID.randomUUID(), doctorId,
+                                "2030-01-01T18:00:00", "2030-01-01T18:30:00")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(
+                        org.hamcrest.Matchers.containsString("working hours")));
+    }
+
+    @Test
+    void failsClosedWhenDoctorAvailabilityCannotBeChecked() throws Exception {
+        doThrow(new ServiceUnavailableException("Doctor availability cannot be verified right now. Please retry shortly."))
+                .when(doctorScheduleValidator).validateSlot(any(), any(), any());
+
+        mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(appointmentPayload(UUID.randomUUID(), doctorId,
+                                "2030-01-01T10:00:00", "2030-01-01T10:30:00")))
+                .andExpect(status().isServiceUnavailable());
+    }
+
+    @Test
+    void fullLifecycleTransitionsAndHistoryAreRecorded() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String appointmentId = createAppointment(patientId, doctorId, "2030-03-01T10:00:00", "2030-03-01T11:00:00");
+        String patientToken = token("patient1", patientId, List.of("PATIENT"));
+
+        mockMvc.perform(patch("/api/v1/appointments/{id}/confirm", appointmentId)
+                        .header("Authorization", "Bearer " + patientToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CONFIRMED"));
+
+        mockMvc.perform(patch("/api/v1/appointments/{id}/start", appointmentId)
+                        .header("Authorization", "Bearer " + doctorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("IN_PROGRESS"));
+
+        mockMvc.perform(patch("/api/v1/appointments/{id}/complete", appointmentId)
+                        .header("Authorization", "Bearer " + doctorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("COMPLETED"));
+
+        mockMvc.perform(get("/api/v1/appointments/{id}/history", appointmentId)
+                        .header("Authorization", "Bearer " + patientToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(4))
+                .andExpect(jsonPath("$.data[0].action").value("CREATED"))
+                .andExpect(jsonPath("$.data[0].toStatus").value("SCHEDULED"))
+                .andExpect(jsonPath("$.data[1].action").value("CONFIRMED"))
+                .andExpect(jsonPath("$.data[1].fromStatus").value("SCHEDULED"))
+                .andExpect(jsonPath("$.data[2].action").value("STARTED"))
+                .andExpect(jsonPath("$.data[3].action").value("COMPLETED"));
+    }
+
+    @Test
+    void invalidStatusTransitionIsRejectedWithConflict() throws Exception {
+        String appointmentId = createAppointment(UUID.randomUUID(), doctorId, "2030-03-01T12:00:00", "2030-03-01T13:00:00");
+
+        // SCHEDULED -> IN_PROGRESS is not allowed: the booking must be confirmed first.
+        mockMvc.perform(patch("/api/v1/appointments/{id}/start", appointmentId)
+                        .header("Authorization", "Bearer " + doctorToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(
+                        org.hamcrest.Matchers.containsString("cannot be started in status SCHEDULED")));
+    }
+
+    @Test
+    void patientsCannotMarkAnAppointmentAsANoShow() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String appointmentId = createAppointment(patientId, doctorId, "2030-03-01T14:00:00", "2030-03-01T15:00:00");
+        String patientToken = token("patient1", patientId, List.of("PATIENT"));
+
+        mockMvc.perform(patch("/api/v1/appointments/{id}/no-show", appointmentId)
+                        .header("Authorization", "Bearer " + patientToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(patch("/api/v1/appointments/{id}/no-show", appointmentId)
+                        .header("Authorization", "Bearer " + token("nurse1", UUID.randomUUID(), List.of("NURSE"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("NO_SHOW"));
+    }
+
+    @Test
+    void appointmentHistoryIsScopedToTheAppointmentOwner() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String appointmentId = createAppointment(patientId, doctorId, "2030-03-01T16:00:00", "2030-03-01T17:00:00");
+
+        mockMvc.perform(get("/api/v1/appointments/{id}/history", appointmentId)
+                        .header("Authorization", "Bearer " + token("patient2", UUID.randomUUID(), List.of("PATIENT"))))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/v1/appointments/{id}/history", appointmentId)
+                        .header("Authorization", "Bearer " + token("doctor2", UUID.randomUUID(), List.of("DOCTOR"))))
+                .andExpect(status().isForbidden());
+    }
+
     private String createAppointment(UUID patientId, UUID doctorId, String token) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/v1/appointments")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(appointmentPayload(patientId, doctorId,
                                 "2030-01-01T10:00:00", "2030-01-01T11:00:00")))
+                .andExpect(status().isCreated())
+                .andReturn();
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        return body.at("/data/appointmentId").asText();
+    }
+
+    private String createAppointment(UUID patientId, UUID doctorId, String startTime, String endTime)
+            throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + adminToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(appointmentPayload(patientId, doctorId, startTime, endTime)))
                 .andExpect(status().isCreated())
                 .andReturn();
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());

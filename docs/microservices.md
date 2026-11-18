@@ -1,6 +1,6 @@
 # MediFlow Microservices
 
-*Status: reflects the implemented codebase (2026-11-14).*
+*Status: reflects the implemented codebase (2026-11-17, Milestone 6).*
 
 ## Service Catalog (implemented)
 
@@ -9,12 +9,12 @@
 | api-gateway | 8080 | Entry point; routes `/api/v1/**` by path to services; global CORS | Spring Cloud Gateway; no auth filtering at the edge |
 | auth-service | 8081 | Identity + tokens | register/login/refresh/logout/me; BCrypt; JWT access + rotating refresh tokens; users/roles/user_roles/refresh_tokens |
 | patient-service | 8083 | Patient profiles | CRUD + search; soft delete; ownership enforcement (PATIENT only own profile); 409 on recreating soft-deleted profile |
-| appointment-service | 8084 | Scheduling | CRUD + cancel; time-range validation; DB-enforced slot exclusion (PostgreSQL exclusion constraint, 409 on concurrent overlap); status lifecycle (SCHEDULED/CONFIRMED → reschedulable); publishes appointment events |
-| doctor-service | 8085 | Provider management | Doctor profiles + search; availability slots + leaves; ownership enforcement (DOCTOR only own profile) |
+| appointment-service | 8084 | Scheduling | CRUD + cancel; time-range and future-slot validation; synchronous doctor availability/leave validation (fail-closed 503); DB-enforced slot exclusion (409 on concurrent overlap); full lifecycle (confirm/start/complete/no-show, clinical roles only); append-only `appointment_history`; publishes appointment events |
+| doctor-service | 8085 | Provider management | Doctor profiles + search; availability windows + leaves with add/edit/deactivate/cancel; same-day overlap rules; booking-time slot validation for appointment-service; ownership enforcement (DOCTOR only own profile) |
 | billing-service | 8087 | Invoicing + payments | Invoice generation (items, tax, discount, totals), edit (PENDING only), cancel, record payment (optional `Idempotency-Key`, DB-enforced replay/409), refund; one active invoice per appointment; publishes invoice/payment events |
 | analytics-service | 8088 | Reporting | Event-driven analytics read model (appointment/invoice/payment/medical-record fact tables) fed by a Kafka consumer (8 topics, idempotent, retry + DLQ); dashboard summary, appointment stats, revenue, doctor ranking, patient activity (ADMIN/DOCTOR only) |
 | notification-service | 8089 | Notifications | In-app notifications materialized from Kafka appointment/billing events (idempotent, retry + DLQ); paginated list + unread count, mark-read; JWT-scoped reads |
-| medical-record-service | 8091 | Clinical records | Encounter records CRUD + search; doctor/patient ownership and scoped search; publishes medical-record events |
+| medical-record-service | 8091 | Clinical records | Encounter records CRUD + search; doctor/patient ownership and scoped search; future encounter-date guard; metadata-only audit history; publishes medical-record events |
 
 ## Scaffolds / Not in reactor
 
@@ -29,5 +29,7 @@ Reliability posture (all services): health + liveness/readiness probes, end-to-e
 
 ## Internal Dependencies
 
-- All services depend on `common-library` (BaseEntity, ApiResponse, GlobalExceptionHandler, DomainEvent, enums, constants).
+- All services depend on `common-library` (BaseEntity, ApiResponse, GlobalExceptionHandler, DomainEvent, enums, constants, `ClinicClock`).
 - Build: Maven reactor from the root `pom.xml`; no Maven wrapper (system `mvn` required).
+- appointment-service calls doctor-service at `/internal/doctors/{doctorId}/schedule/validation` (not gateway-routed) before committing a booking/reschedule. The caller's JWT and `X-Correlation-ID` are forwarded; transport/5xx failures become 503 (fail closed) and the call is protected by a 5-failure/30s circuit breaker. `services.doctor-service-url` defaults to `http://localhost:8085`.
+- Business time uses the shared `clinic.time-zone` (default `UTC`) in appointment-service and medical-record-service; keep the value consistent across a deployment.

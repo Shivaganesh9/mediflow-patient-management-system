@@ -3,6 +3,7 @@ import { Page } from '../types/common';
 import {
   CreateMedicalRecordRequest,
   MedicalRecord,
+  MedicalRecordHistoryEntry,
   MedicalRecordType,
   UpdateMedicalRecordRequest,
 } from '../types/medical-record';
@@ -23,6 +24,8 @@ export const medicalRecordsApi = {
       params: { ...params, page: params.page ?? 0, size: params.size ?? 20 },
     }),
   get: (recordId: string) => api<MedicalRecord>(`/api/v1/medical-records/${recordId}`),
+  history: (recordId: string) =>
+    api<MedicalRecordHistoryEntry[]>(`/api/v1/medical-records/${recordId}/history`),
   create: (body: CreateMedicalRecordRequest) =>
     api<MedicalRecord>('/api/v1/medical-records', { method: 'POST', body }),
   update: (recordId: string, body: UpdateMedicalRecordRequest) =>

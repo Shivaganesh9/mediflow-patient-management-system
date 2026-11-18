@@ -18,7 +18,30 @@ export interface Appointment {
   appointmentType?: string;
   createdAt: string;
   updatedAt: string;
+  createdBy?: string;
+  updatedBy?: string;
   version: number;
+}
+
+export type AppointmentHistoryAction =
+  | 'CREATED'
+  | 'RESCHEDULED'
+  | 'CONFIRMED'
+  | 'STARTED'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'NO_SHOW';
+
+/** One entry of an appointment's server-side audit trail. */
+export interface AppointmentHistoryEntry {
+  historyId: string;
+  appointmentId: string;
+  action: AppointmentHistoryAction;
+  fromStatus?: AppointmentStatus;
+  toStatus: AppointmentStatus;
+  actor?: string;
+  details?: string;
+  occurredAt: string;
 }
 
 export interface CreateAppointmentRequest {

@@ -3,7 +3,12 @@ import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useAsync } from '../hooks/useAsync';
 import { doctorsApi } from '../api/doctors';
-import { AddAvailabilityRequest, AddLeaveRequest } from '../types/doctor';
+import {
+  AddAvailabilityRequest,
+  AddLeaveRequest,
+  DoctorAvailability,
+  DoctorLeave,
+} from '../types/doctor';
 import { ApiError } from '../types/common';
 import { LoadingState, ErrorState, EmptyState } from '../components/PageState';
 import { Modal } from '../components/Modal';
@@ -13,11 +18,12 @@ const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'
 
 export function DoctorDetailPage() {
   const { doctorId = '' } = useParams();
-  const { hasRole } = useAuth();
+  const { user, hasRole } = useAuth();
   const [showAvailability, setShowAvailability] = useState(false);
+  const [editingAvailability, setEditingAvailability] = useState<DoctorAvailability | null>(null);
   const [showLeave, setShowLeave] = useState(false);
-
-  const canManage = hasRole('ADMIN', 'DOCTOR');
+  const [editingLeave, setEditingLeave] = useState<DoctorLeave | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const detail = useAsync(() => doctorsApi.get(doctorId), [doctorId]);
   const availability = useAsync(() => doctorsApi.availability.list(doctorId), [doctorId]);
@@ -28,6 +34,39 @@ export function DoctorDetailPage() {
   if (!detail.data) return <EmptyState message="Doctor not found." />;
 
   const doctor = detail.data;
+  // Admins manage any schedule; a doctor manages only their own profile (the service enforces
+  // this too, the UI just avoids offering actions that would be rejected).
+  const canManage = hasRole('ADMIN') || (hasRole('DOCTOR') && user?.id === doctor.doctorId);
+
+  const deactivateAvailability = async (slot: DoctorAvailability) => {
+    if (!window.confirm(`Deactivate ${slot.dayOfWeek} ${formatLocalTime(slot.startTime)}–${formatLocalTime(slot.endTime)}?`)) {
+      return;
+    }
+    setBusyKey(`availability:${slot.availabilityId}`);
+    try {
+      await doctorsApi.availability.deactivate(doctorId, slot.availabilityId);
+      availability.reload();
+    } catch (err) {
+      window.alert(errorMessage(err, 'Unable to deactivate availability.'));
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const cancelLeave = async (leave: DoctorLeave) => {
+    if (!window.confirm(`Cancel leave ${formatDate(leave.startDate)} – ${formatDate(leave.endDate)}?`)) {
+      return;
+    }
+    setBusyKey(`leave:${leave.leaveId}`);
+    try {
+      await doctorsApi.leaves.cancel(doctorId, leave.leaveId);
+      leaves.reload();
+    } catch (err) {
+      window.alert(errorMessage(err, 'Unable to cancel leave.'));
+    } finally {
+      setBusyKey(null);
+    }
+  };
 
   return (
     <div className="page-stack">
@@ -98,21 +137,47 @@ export function DoctorDetailPage() {
           ) : availability.error ? (
             <ErrorState message={availability.error} />
           ) : availability.data && availability.data.length > 0 ? (
-            <div className="stack-list">
-              {availability.data.map((slot) => (
-                <div key={slot.availabilityId} className="list-item">
-                  <div>
-                    <strong>{slot.dayOfWeek}</strong>
+            <>
+              <div className="stack-list">
+                {availability.data.map((slot) => (
+                  <div key={slot.availabilityId} className="list-item">
+                    <div>
+                      <strong>{slot.dayOfWeek}</strong>
+                    </div>
+                    <div className="muted">
+                      <span>
+                        {formatLocalTime(slot.startTime)} – {formatLocalTime(slot.endTime)}
+                      </span>
+                      <span className="pill">{slot.active ? 'Active' : 'Inactive'}</span>
+                      {canManage ? (
+                        <div className="row-actions">
+                          <button
+                            className="btn small-btn"
+                            type="button"
+                            disabled={busyKey !== null}
+                            onClick={() => setEditingAvailability(slot)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="btn small-btn"
+                            type="button"
+                            disabled={busyKey !== null}
+                            onClick={() => void deactivateAvailability(slot)}
+                          >
+                            {busyKey === `availability:${slot.availabilityId}` ? '…' : 'Deactivate'}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="muted">
-                    <span>
-                      {formatLocalTime(slot.startTime)} – {formatLocalTime(slot.endTime)}
-                    </span>
-                    <span className="pill">{slot.active ? 'Active' : 'Inactive'}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+              <p className="form-hint">
+                Only active windows are listed. Deactivated windows stop accepting new bookings;
+                existing appointments are unaffected.
+              </p>
+            </>
           ) : (
             <EmptyState message="No availability set yet." />
           )}
@@ -137,7 +202,29 @@ export function DoctorDetailPage() {
                   </strong>
                   {leave.reason ? <p>{leave.reason}</p> : null}
                 </div>
-                <span className="pill pill-warning">Leave</span>
+                <div className="muted">
+                  <span className="pill pill-warning">Leave</span>
+                  {canManage ? (
+                    <div className="row-actions">
+                      <button
+                        className="btn small-btn"
+                        type="button"
+                        disabled={busyKey !== null}
+                        onClick={() => setEditingLeave(leave)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="btn small-btn"
+                        type="button"
+                        disabled={busyKey !== null}
+                        onClick={() => void cancelLeave(leave)}
+                      >
+                        {busyKey === `leave:${leave.leaveId}` ? '…' : 'Cancel leave'}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ))}
           </div>
@@ -147,7 +234,8 @@ export function DoctorDetailPage() {
       </section>
 
       {showAvailability && canManage ? (
-        <AddAvailabilityModal
+        <AvailabilityModal
+          doctorId={doctorId}
           onClose={() => setShowAvailability(false)}
           onSaved={() => {
             setShowAvailability(false);
@@ -155,11 +243,34 @@ export function DoctorDetailPage() {
           }}
         />
       ) : null}
+      {editingAvailability && canManage ? (
+        <AvailabilityModal
+          doctorId={doctorId}
+          slot={editingAvailability}
+          onClose={() => setEditingAvailability(null)}
+          onSaved={() => {
+            setEditingAvailability(null);
+            availability.reload();
+          }}
+        />
+      ) : null}
       {showLeave && canManage ? (
-        <AddLeaveModal
+        <LeaveModal
+          doctorId={doctorId}
           onClose={() => setShowLeave(false)}
           onSaved={() => {
             setShowLeave(false);
+            leaves.reload();
+          }}
+        />
+      ) : null}
+      {editingLeave && canManage ? (
+        <LeaveModal
+          doctorId={doctorId}
+          leave={editingLeave}
+          onClose={() => setEditingLeave(null)}
+          onSaved={() => {
+            setEditingLeave(null);
             leaves.reload();
           }}
         />
@@ -168,9 +279,23 @@ export function DoctorDetailPage() {
   );
 }
 
-function AddAvailabilityModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const { doctorId = '' } = useParams();
-  const [form, setForm] = useState<AddAvailabilityRequest>({ dayOfWeek: 'MONDAY', startTime: '09:00', endTime: '17:00' });
+function AvailabilityModal({
+  doctorId,
+  slot,
+  onClose,
+  onSaved,
+}: {
+  doctorId: string;
+  slot?: DoctorAvailability;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const editing = !!slot;
+  const [form, setForm] = useState<AddAvailabilityRequest>({
+    dayOfWeek: slot?.dayOfWeek ?? 'MONDAY',
+    startTime: slot ? slot.startTime.slice(0, 5) : '09:00',
+    endTime: slot ? slot.endTime.slice(0, 5) : '17:00',
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -178,23 +303,27 @@ function AddAvailabilityModal({ onClose, onSaved }: { onClose: () => void; onSav
     e.preventDefault();
     setSubmitting(true);
     setError(null);
+    const body = {
+      dayOfWeek: form.dayOfWeek,
+      startTime: `${form.startTime}:00`,
+      endTime: `${form.endTime}:00`,
+    };
     try {
-      await doctorsApi.availability.create(doctorId, {
-        dayOfWeek: form.dayOfWeek,
-        startTime: `${form.startTime}:00`,
-        endTime: `${form.endTime}:00`,
-      });
+      if (slot) {
+        await doctorsApi.availability.update(doctorId, slot.availabilityId, { ...body, active: true });
+      } else {
+        await doctorsApi.availability.create(doctorId, body);
+      }
       onSaved();
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message);
-      else setError('Unable to add availability.');
+      setError(errorMessage(err, editing ? 'Unable to update availability.' : 'Unable to add availability.'));
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Modal title="Add availability" onClose={onClose}>
+    <Modal title={editing ? 'Edit availability' : 'Add availability'} onClose={onClose}>
       <form className="form" onSubmit={handleSubmit}>
         <label className="field">
           <span>Day of week *</span>
@@ -226,13 +355,16 @@ function AddAvailabilityModal({ onClose, onSaved }: { onClose: () => void; onSav
             />
           </label>
         </div>
+        <p className="form-hint">
+          A booking must fit entirely inside one window. Windows on the same day cannot overlap.
+        </p>
         {error ? <p className="form-error">{error}</p> : null}
         <div className="form-actions">
           <button type="button" className="btn secondary-btn" onClick={onClose}>
             Cancel
           </button>
           <button className="primary-btn" type="submit" disabled={submitting}>
-            {submitting ? 'Saving…' : 'Add slot'}
+            {submitting ? 'Saving…' : editing ? 'Save changes' : 'Add slot'}
           </button>
         </div>
       </form>
@@ -240,9 +372,23 @@ function AddAvailabilityModal({ onClose, onSaved }: { onClose: () => void; onSav
   );
 }
 
-function AddLeaveModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const { doctorId = '' } = useParams();
-  const [form, setForm] = useState<AddLeaveRequest>({ startDate: '', endDate: '', reason: '' });
+function LeaveModal({
+  doctorId,
+  leave,
+  onClose,
+  onSaved,
+}: {
+  doctorId: string;
+  leave?: DoctorLeave;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const editing = !!leave;
+  const [form, setForm] = useState<AddLeaveRequest>({
+    startDate: leave?.startDate ?? '',
+    endDate: leave?.endDate ?? '',
+    reason: leave?.reason ?? '',
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -251,18 +397,21 @@ function AddLeaveModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     setSubmitting(true);
     setError(null);
     try {
-      await doctorsApi.leaves.create(doctorId, form);
+      if (leave) {
+        await doctorsApi.leaves.update(doctorId, leave.leaveId, form);
+      } else {
+        await doctorsApi.leaves.create(doctorId, form);
+      }
       onSaved();
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message);
-      else setError('Unable to add leave.');
+      setError(errorMessage(err, editing ? 'Unable to update leave.' : 'Unable to add leave.'));
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Modal title="Add leave" onClose={onClose}>
+    <Modal title={editing ? 'Edit leave' : 'Add leave'} onClose={onClose}>
       <form className="form" onSubmit={handleSubmit}>
         <div className="form-grid">
           <label className="field">
@@ -288,16 +437,21 @@ function AddLeaveModal({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <span>Reason</span>
           <input value={form.reason ?? ''} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
         </label>
+        <p className="form-hint">Approved leave blocks new bookings for every day in the range.</p>
         {error ? <p className="form-error">{error}</p> : null}
         <div className="form-actions">
           <button type="button" className="btn secondary-btn" onClick={onClose}>
             Cancel
           </button>
           <button className="primary-btn" type="submit" disabled={submitting}>
-            {submitting ? 'Saving…' : 'Add leave'}
+            {submitting ? 'Saving…' : editing ? 'Save changes' : 'Add leave'}
           </button>
         </div>
       </form>
     </Modal>
   );
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
 }

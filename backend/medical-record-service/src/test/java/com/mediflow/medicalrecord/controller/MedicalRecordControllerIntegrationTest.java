@@ -358,6 +358,64 @@ class MedicalRecordControllerIntegrationTest extends AbstractMedicalRecordIntegr
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    void medicalRecordHistoryTracksCreateAndUpdateWithoutClinicalValues() throws Exception {
+        UUID doctorId = UUID.randomUUID();
+        String doctorToken = token("doctor1", doctorId, List.of("DOCTOR"));
+        String recordId = createRecord(UUID.randomUUID(), "CONSULTATION", doctorToken);
+
+        mockMvc.perform(put("/api/v1/medical-records/" + recordId)
+                        .header("Authorization", "Bearer " + doctorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"diagnosis\":\"Updated diagnosis\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/v1/medical-records/{id}/history", recordId)
+                        .header("Authorization", "Bearer " + doctorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].action").value("CREATED"))
+                .andExpect(jsonPath("$.data[0].actor").value("doctor1"))
+                .andExpect(jsonPath("$.data[1].action").value("UPDATED"))
+                .andExpect(jsonPath("$.data[1].changedFields").value("diagnosis"))
+                // Only metadata is exposed by the audit trail, never clinical values.
+                .andExpect(jsonPath("$.data[1].diagnosis").doesNotExist());
+    }
+
+    @Test
+    void medicalRecordHistoryIsScopedToRecordReaders() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String recordId = createRecord(patientId, "CONSULTATION",
+                token("doctor1", UUID.randomUUID(), List.of("DOCTOR")));
+
+        mockMvc.perform(get("/api/v1/medical-records/{id}/history", recordId)
+                        .header("Authorization", "Bearer " + token("patient2", UUID.randomUUID(), List.of("PATIENT"))))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/v1/medical-records/{id}/history", recordId)
+                        .header("Authorization", "Bearer " + token("nurse1", UUID.randomUUID(), List.of("NURSE"))))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/v1/medical-records/{id}/history", recordId)
+                        .header("Authorization", "Bearer " + token("patient1", patientId, List.of("PATIENT"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].action").value("CREATED"));
+    }
+
+    @Test
+    void rejectsFutureEncounterDate() throws Exception {
+        String token = token("doctor1", UUID.randomUUID(), List.of("DOCTOR"));
+
+        mockMvc.perform(post("/api/v1/medical-records")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"patientId\":\"" + UUID.randomUUID() + "\","
+                                + "\"encounterDate\":\"2999-01-01\","
+                                + "\"chiefComplaint\":\"Cough\",\"notes\":\"Cough for two days.\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
     private String createRecord(UUID patientId, String recordType, String token) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/v1/medical-records")
                         .header("Authorization", "Bearer " + token)

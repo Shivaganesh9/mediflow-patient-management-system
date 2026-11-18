@@ -1,6 +1,6 @@
 # MediFlow Project Roadmap
 
-*Status: reflects the implemented codebase (2026-11-14).*
+*Status: reflects the implemented codebase (2026-11-17).*
 
 ## Status Summary
 
@@ -39,6 +39,39 @@ Implemented and green: auth, patient, doctor, appointment, medical-record, billi
    for pre-existing slot/invoice conflicts, idempotency retention and read-only reconciliation
    queries.
 
+## Milestone 6 — Healthcare workflow completeness (completed)
+
+1. **Doctor availability and leave enforcement:** appointment-service validates every booking and
+   reschedule against doctor-service (`GET /internal/doctors/{doctorId}/schedule/validation`). A slot
+   must fit entirely inside one active weekly window for that weekday and must not fall in an
+   approved leave period. The check forwards the caller's token and correlation id, is bounded by
+   timeouts and a circuit breaker, and **fails closed with 503** when the schedule cannot be
+   verified. Doctor-service gained UPDATE/DELETE for availability and leaves (soft deactivate /
+   cancel), same-day overlap rules (409), and ownership enforcement (ADMIN any doctor, DOCTOR own
+   profile).
+2. **Appointment lifecycle:** `SCHEDULED → CONFIRMED → IN_PROGRESS → COMPLETED` plus
+   `SCHEDULED`/`CONFIRMED → CANCELLED | NO_SHOW`. Confirm is open to any caller with access;
+   start/complete/no-show require ADMIN/DOCTOR/NURSE. Repeated or invalid transitions return 409.
+   Past-slot checks use the shared configurable clinic zone, and booking keeps the Milestone 5
+   database exclusion constraints as the final concurrency authority.
+3. **Auditability:** additive `appointment_history` (V7) records every create/reschedule/transition
+   with actor, from/to status, previous slot and timestamp in the same transaction; exposed at
+   `GET /api/v1/appointments/{id}/history` under the appointment's access rules. Medical-record
+   service gained a metadata-only `medical_record_history` (V5) storing **changed field names only**
+   plus actor/timestamp, exposed at `GET /api/v1/medical-records/{recordId}/history`; encounter
+   dates in the future are rejected via the clinic clock. Multiple medical records per appointment
+   remain allowed.
+4. **Role-specific dashboards:** the dashboard now renders an admin operations summary, a doctor's
+   today-in-clinic list with a link to their availability, and a patient view of upcoming
+   appointments, invoices and medical records, alongside the shared appointment and notification
+   panels.
+5. **Frontend workflow parity:** appointment lifecycle actions with role/status gating, history
+   modal, working-hours and leave hints in create/reschedule, availability edit/deactivate, leave
+   edit/cancel, medical-record audit modal, and notification deep links into the relevant workflow.
+6. **Docs/runbook:** API contract, database design, security matrix, architecture/microservice notes
+   and operational guidance for schedule dependency failures, transition conflicts and audit-table
+   reconciliation.
+
 ## In Progress / Next
 
 1. **Consume more Kafka events** — optionally medical-record.updated.v1 → analytics; medical-record topics → notifications.
@@ -53,3 +86,6 @@ Implemented and green: auth, patient, doctor, appointment, medical-record, billi
 - Service registry / config server (Eureka enabled, no server in repo).
 - Insurance claims, patient self-service portal, FHIR/HL7 interoperability.
 - Analytics aggregation and reporting beyond snapshot storage.
+- Leave approval workflow (leaves currently block bookings as soon as they are created) and
+  backfilling `appointment_history` / `medical_record_history` for records written before Milestone 6.
+- Clinical-value audit snapshots (today's medical-record history records changed field names only).

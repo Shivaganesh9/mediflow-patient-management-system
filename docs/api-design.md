@@ -1,6 +1,6 @@
 # MediFlow REST API
 
-*Status: reflects the implemented codebase (2026-11-14, Milestone 4).*
+*Status: reflects the implemented codebase (2026-11-17, Milestone 6).*
 
 ## 1. Conventions
 
@@ -61,20 +61,54 @@ Outside `/api/v1`, hidden from OpenAPI (`@Hidden`), not routed by the gateway, a
 | GET `` | authenticated | Search by `search`, `department`, pageable (all authenticated roles) |
 | GET `/{doctorId}` | authenticated (ownership enforced) | Get profile; 404 if missing; DOCTOR only own (403 otherwise) |
 | PUT `/{doctorId}` | ADMIN/DOCTOR | Update profile; 400 if email taken by another; DOCTOR only own; staff roles → 403 |
-| POST `/{doctorId}/availability` | ADMIN/DOCTOR | Add availability slot; DOCTOR only own |
-| GET `/{doctorId}/availability` | authenticated | List availability |
-| POST `/{doctorId}/leaves` | ADMIN/DOCTOR | Add leave period; DOCTOR only own |
-| GET `/{doctorId}/leaves` | authenticated | List leaves |
+| POST `/{doctorId}/availability` | ADMIN/DOCTOR | Add availability slot; DOCTOR only own. 400 when `endTime <= startTime`; **409** if it overlaps another active window on the same day |
+| GET `/{doctorId}/availability` | authenticated | List **active** availability windows, ordered by day and start time |
+| PUT `/{doctorId}/availability/{availabilityId}` | ADMIN/DOCTOR | Update a window (day/start/end, optional `active`); overlaps checked excluding self (**409**); DOCTOR only own |
+| DELETE `/{doctorId}/availability/{availabilityId}` | ADMIN/DOCTOR | Deactivate (soft-retire) a window; idempotent; existing appointments are unaffected; DOCTOR only own |
+| POST `/{doctorId}/leaves` | ADMIN/DOCTOR | Add an approved leave period; 400 when `endDate < startDate`; **409** if it overlaps an existing leave; DOCTOR only own |
+| GET `/{doctorId}/leaves` | authenticated | List non-cancelled leaves ordered by start date |
+| PUT `/{doctorId}/leaves/{leaveId}` | ADMIN/DOCTOR | Update leave dates/reason; overlap-checked excluding self (**409**); DOCTOR only own |
+| DELETE `/{doctorId}/leaves/{leaveId}` | ADMIN/DOCTOR | Cancel a leave (soft delete, keeps the record auditable); DOCTOR only own |
+
+### 4.1 Working-hours and leave rules
+
+Leaves are treated as approved by definition (there is no separate approval workflow), and overlapping
+leaves are rejected with 409. A bookable slot must fall **entirely inside one active weekly window**
+for the doctor's weekday; if there is no active window that day, or the date falls in a leave period,
+the slot is rejected.
+
+### 4.2 Internal endpoint — slot validation (not public)
+
+| Method & Path | Auth | Description |
+|---|---|---|
+| GET `/internal/doctors/{doctorId}/schedule/validation?startTime=&endTime=` | any authenticated caller | Service-to-service check used by appointment-service on create/reschedule. Returns `data: { valid, reason }`; 404 when the doctor does not exist. Authorization deliberately does not require profile access, so a patient can verify the doctor's schedule while booking. |
+
+Outside `/api/v1`, not routed by the gateway. Appointment-service forwards the caller's bearer token and
+correlation id, and **fails closed** (503) when the schedule cannot be checked.
 
 ## 5. Appointment Service (8084) — `/api/v1/appointments`
 
 | Method & Path | Auth | Description |
 |---|---|---|
-| POST `` | authenticated (scoped; staff broad) | Create (status SCHEDULED); PATIENT forced to own patientId, DOCTOR to own doctorId, staff any. 400 if `endTime <= startTime`; **409** if the patient or doctor already has an overlapping appointment (also enforced by a PostgreSQL exclusion constraint, so a concurrent booking cannot slip through) |
+| POST `` | authenticated (scoped; staff broad) | Create (status SCHEDULED); PATIENT forced to own patientId, DOCTOR to own doctorId, staff any. 400 if `endTime <= startTime` or the start is in the past; **409** when the slot is outside the doctor's active working hours or overlaps approved leave; **503** when the doctor's schedule cannot be verified. **409** if the patient or doctor already has an overlapping appointment (also enforced by a PostgreSQL exclusion constraint, so a concurrent booking cannot slip through) |
 | GET `` | authenticated (scoped; staff broad) | Filter `status`, `patientId`, `doctorId`, `fromTime`, `toTime`, pageable; PATIENT/DOCTOR forced to own identity; unknown roles → 403 |
 | GET `/{appointmentId}` | authenticated (ownership) | Get by business id; PATIENT/DOCTOR only own (403 otherwise), staff any; 404 if missing |
-| PUT `/{appointmentId}` | authenticated (ownership) | Reschedule; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED (**409** otherwise); overlap checked excluding self (**409** on conflict, DB-enforced) |
+| GET `/{appointmentId}/history` | authenticated (ownership) | Append-only audit trail (`CREATED`, `RESCHEDULED`, `CONFIRMED`, `STARTED`, `COMPLETED`, `CANCELLED`, `NO_SHOW`) with actor, from/to status and timestamps; same access rules as the appointment |
+| PUT `/{appointmentId}` | authenticated (ownership) | Reschedule; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED (**409** otherwise); slot revalidated against working hours/leave (**409**, **503**); overlap checked excluding self (**409** on conflict, DB-enforced) |
+| PATCH `/{appointmentId}/confirm` | authenticated (ownership) | `SCHEDULED → CONFIRMED`; any caller who can access the appointment; **409** for any other status |
+| PATCH `/{appointmentId}/start` | ADMIN/DOCTOR/NURSE + ownership | `CONFIRMED → IN_PROGRESS`; **409** for any other status; 403 for non-clinical roles |
+| PATCH `/{appointmentId}/complete` | ADMIN/DOCTOR/NURSE + ownership | `IN_PROGRESS → COMPLETED`; **409** for any other status; 403 for non-clinical roles |
+| PATCH `/{appointmentId}/no-show` | ADMIN/DOCTOR/NURSE + ownership | `SCHEDULED`/`CONFIRMED → NO_SHOW`; **409** for any other status; 403 for non-clinical roles |
 | PATCH `/{appointmentId}/cancel` | authenticated (ownership) | Cancel; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED (**409** otherwise) |
+
+### 5.1 Appointment lifecycle
+
+`SCHEDULED → CONFIRMED → IN_PROGRESS → COMPLETED`, with `SCHEDULED`/`CONFIRMED → CANCELLED` or
+`NO_SHOW`. Confirm is open to anyone who can access the appointment; start/complete/no-show require a
+clinical role (ADMIN, DOCTOR, NURSE). Repeating a transition in the current status is a **409** (there
+are no idempotent no-ops). Every transition writes an `appointment_history` row in the same transaction
+and publishes the existing `appointment.updated.v1` / `appointment.cancelled.v1` event — no new Kafka
+topics were added. `RESCHEDULED` history is recorded only when the slot actually changes.
 
 Reserving statuses: `SCHEDULED`, `CONFIRMED`, `IN_PROGRESS` hold the doctor's slot; `CANCELLED`, `COMPLETED` and `NO_SHOW` release it. Ranges are half-open, so 10:00–11:00 and 11:00–12:00 do not conflict.
 
@@ -82,10 +116,14 @@ Reserving statuses: `SCHEDULED`, `CONFIRMED`, `IN_PROGRESS` hold the doctor's sl
 
 | Method & Path | Auth (role) | Description |
 |---|---|---|
-| POST `` | ADMIN/DOCTOR | Create (recordType defaults CONSULTATION); doctor forced to own uid unless admin |
+| POST `` | ADMIN/DOCTOR | Create (recordType defaults CONSULTATION); doctor forced to own uid unless admin; 400 when `encounterDate` is in the future |
 | GET `` | authenticated (scoped) | Filter `patientId`, `doctorId`, `recordType`, `fromDate`, `toDate`; patient forced to own patientId, doctor forced to own doctorId |
 | GET `/{recordId}` | authenticated (ownership) | Read; patient only own patientId, doctor only own doctorId, admin any; NURSE/BILLING_STAFF/SUPPORT and unknown roles → 403 |
-| PUT `/{recordId}` | ADMIN/DOCTOR | Update; write requires admin or owning doctor; non-ADMIN may not change `patientId` (403) |
+| GET `/{recordId}/history` | authenticated (ownership) | Append-only audit trail: `CREATED`/`UPDATED`, actor, timestamp and the **names** of changed fields (no clinical values); same access rules as reading the record |
+| PUT `/{recordId}` | ADMIN/DOCTOR | Update; write requires admin or owning doctor; non-ADMIN may not change `patientId` (403); 400 when `encounterDate` is in the future |
+
+The audit trail is metadata-only by design: it proves who changed which fields without creating a
+second copy of sensitive clinical data. Updates that change no field write no history row.
 
 ## 7. Billing Service (8087) — `/api/v1/invoices` and `/api/v1/payments`
 

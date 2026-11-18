@@ -56,8 +56,14 @@ export interface DoctorLeave {
   updatedAt: string;
 }
 
+export interface UpdateAvailabilityRequest extends AddAvailabilityRequest {
+  active?: boolean;
+}
+
 export interface AddLeaveRequest {
   startDate: string;
   endDate: string;
   reason?: string;
 }
+
+export type UpdateLeaveRequest = AddLeaveRequest;

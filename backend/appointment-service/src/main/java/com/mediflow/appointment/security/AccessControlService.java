@@ -55,6 +55,22 @@ public class AccessControlService {
         return isAdmin() || hasAnyRole(STAFF_ROLES);
     }
 
+    /**
+     * Roles allowed to drive the clinical part of the appointment lifecycle (start, complete,
+     * no-show). Billing/support staff can read appointments for their work but must not change
+     * clinical state.
+     */
+    public boolean hasClinicalAccess() {
+        return isAdmin() || isDoctor() || hasRole("NURSE");
+    }
+
+    public void assertClinicalAccess() {
+        if (!hasClinicalAccess()) {
+            throw new AccessDeniedException(
+                    "Only clinical staff may change the clinical state of an appointment");
+        }
+    }
+
     public boolean hasRole(String role) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null) {
