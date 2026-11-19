@@ -1,6 +1,7 @@
 package com.mediflow.auth.config;
 
 import com.mediflow.auth.security.JwtAuthenticationFilter;
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -42,6 +43,8 @@ public class SecurityConfig {
                 .exceptionHandling(exceptions -> exceptions
                     .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .authorizeHttpRequests(auth -> auth
+                        // Error dispatches must not be re-authorized: see doctor-service SecurityConfig.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/refresh",
                                 "/api/v1/auth/password-reset/**",
                                 "/swagger-ui/**", "/v3/api-docs/**", "/actuator/health", "/actuator/health/**",

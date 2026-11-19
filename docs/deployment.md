@@ -19,7 +19,7 @@ Copy `.env.example` → `.env` and set `JWT_SECRET` and `DB_PASSWORD` (no defaul
 - Build all backend modules: `mvn -DskipTests package`
 - Run one service with reactor deps: `mvn -pl backend/patient-service -am spring-boot:run`
 - Tests (H2 PostgreSQL mode; Testcontainers PostgreSQL 16 for analytics, medical-record, and notification): `mvn -pl backend/patient-service test`
-- Frontend: `cd frontend/mediflow-ui && npm run dev` (Vite dev server, port 3000); build `npm run build` (no lint/test scripts). Services default their CORS allow-list to `http://localhost:3000` (override with `CORS_ALLOWED_ORIGINS`).
+- Frontend: `cd frontend/mediflow-ui && npm run dev` (Vite dev server, port 3000); build `npm run build`; browser tests `npm run test:e2e` (Playwright, mocked API, 38 tests). Services default their CORS allow-list to `http://localhost:3000` (override with `CORS_ALLOWED_ORIGINS`).
 
 ## Runtime Topology
 
@@ -75,6 +75,7 @@ Notes:
 - **PostgreSQL extensions:** appointment-service requires `btree_gist` (installed by Flyway V6). On managed PostgreSQL where the application role cannot create extensions, the DBA must pre-install it per database.
 - **Gateway HTTP client:** `GATEWAY_CONNECT_TIMEOUT_MS` (2000), `GATEWAY_RESPONSE_TIMEOUT` (10s), `GATEWAY_POOL_MAX_CONNECTIONS` (200), `GATEWAY_POOL_ACQUIRE_TIMEOUT_MS` (5000).
 - **Health:** `HEALTH_SHOW_DETAILS` (`never`; use `when-authorized`/`always` for local debugging only). All values are documented in `.env.example`.
+- **Internal service API:** `/internal/**` (doctor-service schedule validation) is **not** routed by the gateway and is authenticated with a 30-second service credential. Its signing key is derived from `JWT_SECRET` with the context `mediflow.internal-service-token.v1`, so user tokens can never act as service credentials and no extra secret has to be distributed. Appointment-service mints it; doctor-service accepts only `iss=appointment-service`, `aud=doctor-service`, `type=service`, `scope=doctor-schedule:validate`. User tokens get `403`, missing/malformed/expired credentials get `401`. There is nothing to configure.
 
 ## Health, Metrics and Shutdown
 
@@ -84,8 +85,55 @@ Notes:
 - Services shut down gracefully (`server.shutdown: graceful`, 30s phase timeout). Compose sets `stop_grace_period: 30s` and `restart: unless-stopped` for Postgres/Kafka/Redis; Kafka also has a broker API healthcheck.
 
 ## CI/CD
-- GitHub Actions (`.github/workflows/ci.yml`) runs on every push/PR: `mvn -B -ntp verify` (backend tests incl. Testcontainers), frontend `npm ci` + `npm run build`, and a 9-service matrix that packages each service and builds its Docker image (`mediflow/<service>:ci`).
-- No deployment pipeline yet; images are built and verified but not published.
+`.github/workflows/ci.yml` separates fast pull-request feedback from heavier release validation:
+
+| Job | Trigger | What it runs |
+|---|---|---|
+| `backend` | push + PR | `mvn -B -ntp verify` (backend tests incl. Testcontainers) and asserts build output stays out of git |
+| `frontend` | push + PR | `npm ci`, `npm run typecheck:e2e`, `npm run build` |
+| `browser-e2e` | push + PR | Playwright chromium suite (mocked API); report uploaded on failure |
+| `release-checks` | push + PR | `node testing/release/check-release-readiness.mjs` + `docker compose config` for both Compose files |
+| `docker-images` | push + PR | 9-service matrix that packages each service and builds its image (`mediflow/<service>:ci`) |
+| `cross-service-e2e` | push to `main`, manual | `node testing/e2e/run-e2e.mjs --profile=full --build` against PostgreSQL/Redis/Kafka |
+| `release-smoke` | push to `main`, manual | `node testing/release/smoke.mjs --build` (production configuration, no Spring profile) |
+
+No deployment pipeline exists yet; images are built and verified but not published.
+
+## Release validation
+
+Two commands gate a release; both are documented in `docs/testing.md`:
+
+```powershell
+# Static (no Docker): configuration, migrations, secrets, image contract, gateway exposure
+node testing/release/check-release-readiness.mjs
+
+# Dynamic: starts docker-compose.yml + all services without a Spring profile and asserts
+# health, absence of dev seed data, gateway/internal surface, register/login/profile flow,
+# duplicate-registration rejection and restart recovery
+node testing/release/smoke.mjs --build
+```
+
+The smoke test publishes infrastructure on 54322/63792/59092
+(`testing/release/docker-compose.release.yml`) so a host-local PostgreSQL on 5432 cannot intercept
+the run; services listen on 17080–17091. Use `--services=core` on memory-constrained machines.
+It never activates the `seed` profile: the absence of the demo accounts is itself asserted.
+
+Release checklist:
+
+1. `mvn -B -ntp verify` and `cd frontend/mediflow-ui; npm ci; npm run build` are green.
+2. `npm run test:e2e` (38 browser tests) is green.
+3. `node testing/e2e/run-e2e.mjs --profile=full --build` is green (8/8 journeys).
+4. `node testing/release/check-release-readiness.mjs` reports all checks passed.
+5. `node testing/release/smoke.mjs --build` is green (graceful shutdown is asserted on Linux).
+6. All nine images build and every service reports `UP` on `/actuator/health`.
+7. `JWT_SECRET` and `DB_PASSWORD` are real secrets in the target environment — never `.env.example`.
+8. `HEALTH_SHOW_DETAILS=never`, `AUTH_PASSWORD_RESET_EXPOSE_TOKEN=false`, CORS limited to the real
+   frontend origin, gateway remains the only browser entry point (no `/internal/**` route).
+
+Recovery during a release: services shut down gracefully (30s phase) and are stateless apart from
+PostgreSQL; restart a service and re-check readiness. Kafka consumers are idempotent, so a restart
+replays safely. Incident and reconciliation queries are in `docs/runbook.md` §16.
+
 
 ## Not Yet Delivered
 - Kubernetes/container orchestration, Terraform, Prometheus/Grafana **server** + dashboards (services already expose Prometheus metrics), distributed tracing (Zipkin/OpenTelemetry), backups/DR automation, HTTPS/TLS termination, rate limiting, centralized log aggregation, image registry/CD pipeline.

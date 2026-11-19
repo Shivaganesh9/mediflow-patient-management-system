@@ -28,3 +28,13 @@ logs/
 node_modules/
 npm-debug.log*
 *.tsbuildinfo
+
+# Playwright browser suite
+frontend/mediflow-ui/e2e/test-results/
+frontend/mediflow-ui/e2e/report/
+frontend/mediflow-ui/playwright-report/
+
+# Cross-service E2E / release smoke run artifacts
+testing/e2e/.logs/
+testing/release/.logs/
+testing/release/.artifacts/

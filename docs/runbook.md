@@ -873,3 +873,71 @@ SELECT a.leave_id, b.leave_id, a.doctor_id, a.start_date, a.end_date, b.start_da
 ```
 
 Pre-V7 appointments have no `CREATED` history row; that is expected and not backfilled automatically.
+
+## 17. Automated browser, cross-service and release verification (M7)
+
+Full details and the requirement → suite map are in `docs/testing.md`. Quick reference:
+
+```powershell
+# Browser workflows (mocked API, real React app) - 5 specs, 38 tests
+cd frontend/mediflow-ui
+npm run typecheck:e2e
+npm run test:e2e
+
+# Cross-service E2E (throwaway PostgreSQL 16 + Redis 7 + Kafka 4.0 on 54321/56379/59092)
+node testing/e2e/run-e2e.mjs --profile=core --build    # 7 journeys, Kafka journey skipped
+node testing/e2e/run-e2e.mjs --profile=full            # 8 journeys incl. Kafka fan-out
+node testing/e2e/run-e2e.mjs --keep                    # keep stack for debugging
+
+# Release readiness (static, no Docker) and production-configuration smoke
+node testing/release/check-release-readiness.mjs
+node testing/release/smoke.mjs --build
+node testing/release/smoke.mjs --services=core         # constrained machine
+```
+
+Outputs:
+
+* `testing/e2e/.logs/journeys.json` and `testing/e2e/.logs/<service>.log` (the runner generates the
+  JWT secret and DB password per run — nothing is read from `.env`).
+* `testing/release/.logs/smoke.json` and `testing/release/.logs/<service>.log`.
+
+The e2e stack uses 18080–18091; the release smoke uses 17080–17091 and publishes infrastructure on
+54322/63792/59092 (`testing/release/docker-compose.release.yml`) so a host-local PostgreSQL cannot
+intercept it. Stop one stack before starting another — both bring up 7–9 JVMs.
+
+### 17.1 Internal schedule API credential
+
+`/internal/doctors/{doctorId}/schedule/validation` is not gateway-routed. Appointment-service mints a
+30-second JWT signed with a key derived from `JWT_SECRET`
+(`mediflow.internal-service-token.v1` context); doctor-service requires
+`iss=appointment-service`, `aud=doctor-service`, `type=service` and
+`scope=doctor-schedule:validate`. Verify manually (PowerShell):
+
+```powershell
+# Gateway: not routed -> 404
+Invoke-WebRequest -SkipHttpErrorCheck -Uri "http://localhost:8080/internal/doctors/00000000-0000-0000-0000-000000000002/schedule/validation?startTime=2026-12-07T09:30:00&endTime=2026-12-07T10:00:00" | Select-Object StatusCode
+
+# Direct, without a credential -> 401
+Invoke-WebRequest -SkipHttpErrorCheck -Uri "http://localhost:8085/internal/doctors/00000000-0000-0000-0000-000000000002/schedule/validation?startTime=2026-12-07T09:30:00&endTime=2026-12-07T10:00:00" | Select-Object StatusCode
+
+# Direct, with a valid user token -> 403 (users never hold the internal scope)
+```
+
+A booking through the gateway exercises the positive path: appointment-service checks working hours
+and approved leave before persisting and fails closed with `503` if doctor-service cannot answer.
+
+### 17.2 403 vs 401 regression (fixed in M7)
+
+Symptom seen during the first cross-service run: a request denied by a service's `SecurityConfig`
+returned **401 with an empty body** instead of `403`.
+
+Cause: the servlet container turns `sendError(403)` into an ERROR dispatch to `/error`. Spring
+Security filters that dispatch, but `OncePerRequestFilter` skips it, so the JWT filter did not run and
+`anyRequest().authenticated()` rejected the anonymous `/error` request; the entry point then replaced
+the pending 403 with a 401.
+
+Fix: every service's `SecurityConfig` starts its `authorizeHttpRequests` block with
+`.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()`. `ErrorDispatchSecurityTest`
+(doctor-service) pins both halves: error dispatches are permitted, ordinary requests still require
+authentication. If a future service is added, copy that rule — otherwise its filter-chain denials
+degrade to 401 again.

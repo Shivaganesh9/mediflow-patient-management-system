@@ -19,7 +19,7 @@
 
 - Functional components with hooks; strict TS.
 - Centralize shared UI in `components/`; one page per domain under `pages/`.
-- No lint/test scripts configured; `npm run build` runs `tsc -b && vite build`.
+- `npm run build` runs `tsc -b && vite build`; `npm run test:e2e` runs the Playwright browser suite; `npm run typecheck:e2e` type-checks the browser suite. No linter is configured.
 
 ## Testing
 

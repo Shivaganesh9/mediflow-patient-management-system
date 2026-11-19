@@ -39,8 +39,13 @@ export function toLocalDateTimeInput(value: string): string {
   return value ? value.slice(0, 16) : '';
 }
 
+/**
+ * Normalizes a `datetime-local` control value to the naive `YYYY-MM-DDTHH:mm:ss` form the services
+ * accept. The control can yield either `HH:mm` or `HH:mm:ss`, and both the change handler and the
+ * submit handler call this helper, so it must be idempotent.
+ */
 export function fromLocalDateTimeInput(value: string): string {
-  return value ? `${value}:00` : '';
+  return value ? `${value.slice(0, 16)}:00` : '';
 }
 
 export function displayName(firstName?: string, lastName?: string): string {

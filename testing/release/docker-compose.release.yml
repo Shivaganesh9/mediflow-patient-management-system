@@ -1,0 +1,24 @@
+# Release-smoke port override.
+#
+# The shipped docker-compose.yml publishes the conventional development ports (5432, 6379, 9092).
+# A release smoke run must not depend on those being free on the host — on Windows, for example, a
+# native PostgreSQL service usually owns 5432. This override keeps the same images, health checks and
+# volume semantics while publishing the containers on dedicated ports.
+#
+# Use it only through testing/release/smoke.mjs:
+#   docker compose -f docker-compose.yml -f testing/release/docker-compose.release.yml up -d --wait
+services:
+  postgres:
+    ports: !override
+      - "54322:5432"
+
+  redis:
+    ports: !override
+      - "63792:6379"
+
+  kafka:
+    ports: !override
+      - "59092:9092"
+    environment:
+      # The broker advertises the host-side port, so services on the host can connect.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:59092

@@ -2,6 +2,8 @@ package com.mediflow.doctor.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mediflow.common.security.InternalServiceToken;
+import com.mediflow.common.security.JwtClaims;
 import com.mediflow.doctor.identity.IdentityVerifier;
 import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.Jwts;
@@ -18,6 +20,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.nio.charset.StandardCharsets;
 import java.time.DayOfWeek;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Date;
 import java.util.List;
@@ -77,14 +80,14 @@ class DoctorScheduleControllerIntegrationTest {
                 .andExpect(jsonPath("$.data.startTime").value("08:00:00"));
 
         mockMvc.perform(get("/internal/doctors/{id}/schedule/validation", doctorId)
-                        .header("Authorization", "Bearer " + token)
+                        .header("Authorization", "Bearer " + serviceToken())
                         .param("startTime", monday.atTime(10, 0).toString())
                         .param("endTime", monday.atTime(10, 30).toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.valid").value(true));
 
         mockMvc.perform(get("/internal/doctors/{id}/schedule/validation", doctorId)
-                        .header("Authorization", "Bearer " + token)
+                        .header("Authorization", "Bearer " + serviceToken())
                         .param("startTime", monday.atTime(18, 0).toString())
                         .param("endTime", monday.atTime(18, 30).toString()))
                 .andExpect(status().isOk())
@@ -128,7 +131,7 @@ class DoctorScheduleControllerIntegrationTest {
                 .andExpect(status().isConflict());
 
         mockMvc.perform(get("/internal/doctors/{id}/schedule/validation", doctorId)
-                        .header("Authorization", "Bearer " + token)
+                        .header("Authorization", "Bearer " + serviceToken())
                         .param("startTime", monday.atTime(10, 0).toString())
                         .param("endTime", monday.atTime(10, 30).toString()))
                 .andExpect(status().isOk())
@@ -218,6 +221,25 @@ class DoctorScheduleControllerIntegrationTest {
 
     private String doctorToken(UUID doctorId) {
         return token("doctor-" + doctorId, doctorId, List.of("DOCTOR"));
+    }
+
+    /**
+     * Mints the service credential appointment-service would send. User tokens are signed with the
+     * raw {@code jwt.secret}; service tokens use the derived key and are therefore not
+     * interchangeable.
+     */
+    private String serviceToken() {
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .subject(InternalServiceToken.ISSUER_APPOINTMENT_SERVICE)
+                .issuer(InternalServiceToken.ISSUER_APPOINTMENT_SERVICE)
+                .audience().add(InternalServiceToken.AUDIENCE_DOCTOR_SERVICE).and()
+                .claim(JwtClaims.TYPE, InternalServiceToken.TYPE_SERVICE)
+                .claim(InternalServiceToken.CLAIM_SCOPE, InternalServiceToken.SCOPE_DOCTOR_SCHEDULE_VALIDATE)
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(30)))
+                .signWith(InternalServiceToken.signingKey(SECRET), Jwts.SIG.HS256)
+                .compact();
     }
 
     private String token(String subject, UUID uid, List<String> roles) {

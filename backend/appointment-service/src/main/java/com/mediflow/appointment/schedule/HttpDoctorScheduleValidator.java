@@ -17,8 +17,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -28,7 +26,9 @@ import java.util.UUID;
 /**
  * Synchronous doctor-service schedule check used when an appointment is booked or rescheduled.
  *
- * <p>The caller's JWT is forwarded (doctor-service authorizes it), the correlation id keeps both
+ * <p>The call is authenticated with a narrow, short-lived service credential minted by
+ * {@link InternalServiceTokenProvider} (doctor-service only accepts the
+ * {@code doctor-schedule:validate} scope on {@code /internal/**}), the correlation id keeps both
  * sides of the call traceable, and the call is bounded: short timeouts, no retries and a circuit
  * breaker. Any transport/5xx failure becomes {@code 503} so the booking fails closed rather than
  * silently skipping the working-hours and leave rules.</p>
@@ -45,25 +45,30 @@ public class HttpDoctorScheduleValidator implements DoctorScheduleValidator {
 
     private final RestClient restClient;
     private final CircuitBreaker circuitBreaker;
+    private final InternalServiceTokenProvider serviceTokenProvider;
 
     @Autowired
     public HttpDoctorScheduleValidator(
             RestClient.Builder restClientBuilder,
             @Value("${services.doctor-service-url:http://localhost:8085}") String doctorServiceUrl,
             @Value("${services.doctor-service-connect-timeout-ms:1000}") int connectTimeoutMs,
-            @Value("${services.doctor-service-read-timeout-ms:3000}") int readTimeoutMs) {
-        this(buildRestClient(restClientBuilder, doctorServiceUrl, connectTimeoutMs, readTimeoutMs));
+            @Value("${services.doctor-service-read-timeout-ms:3000}") int readTimeoutMs,
+            InternalServiceTokenProvider serviceTokenProvider) {
+        this(buildRestClient(restClientBuilder, doctorServiceUrl, connectTimeoutMs, readTimeoutMs),
+                serviceTokenProvider);
     }
 
     /** Test seam: allows exercising the validator against a stubbed {@link RestClient}. */
-    HttpDoctorScheduleValidator(RestClient restClient) {
-        this(restClient, new CircuitBreaker(FAILURE_THRESHOLD, OPEN_DURATION));
+    HttpDoctorScheduleValidator(RestClient restClient, InternalServiceTokenProvider serviceTokenProvider) {
+        this(restClient, new CircuitBreaker(FAILURE_THRESHOLD, OPEN_DURATION), serviceTokenProvider);
     }
 
     /** Test seam: lets a test drive breaker transitions with a fast threshold/cool-down. */
-    HttpDoctorScheduleValidator(RestClient restClient, CircuitBreaker circuitBreaker) {
+    HttpDoctorScheduleValidator(RestClient restClient, CircuitBreaker circuitBreaker,
+                                InternalServiceTokenProvider serviceTokenProvider) {
         this.restClient = restClient;
         this.circuitBreaker = circuitBreaker;
+        this.serviceTokenProvider = serviceTokenProvider;
     }
 
     private static RestClient buildRestClient(RestClient.Builder builder, String doctorServiceUrl,
@@ -76,7 +81,7 @@ public class HttpDoctorScheduleValidator implements DoctorScheduleValidator {
 
     @Override
     public void validateSlot(UUID doctorId, LocalDateTime startTime, LocalDateTime endTime) {
-        String authorization = callerAuthorizationHeader();
+        String authorization = "Bearer " + serviceTokenProvider.doctorScheduleValidationToken();
         if (!circuitBreaker.allowRequest()) {
             throw new ServiceUnavailableException(
                     "Doctor availability cannot be verified right now. Please retry shortly.");
@@ -132,16 +137,6 @@ public class HttpDoctorScheduleValidator implements DoctorScheduleValidator {
         return reason == null || reason.isBlank()
                 ? "The requested slot is outside the doctor's working hours"
                 : reason;
-    }
-
-    private String callerAuthorizationHeader() {
-        if (RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes) {
-            String authorization = attributes.getRequest().getHeader(HttpHeaders.AUTHORIZATION);
-            if (authorization != null && authorization.startsWith("Bearer ")) {
-                return authorization;
-            }
-        }
-        throw new IllegalStateException("Cannot verify doctor availability without the caller's bearer token");
     }
 
     /** Subset of the doctor-service validation payload; it contains no patient data. */

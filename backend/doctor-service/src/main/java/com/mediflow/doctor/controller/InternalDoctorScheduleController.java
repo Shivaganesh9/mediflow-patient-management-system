@@ -16,7 +16,7 @@ import java.util.UUID;
 
 /**
  * Service-to-service schedule contract. Not routed through the API gateway: only appointment-service
- * calls it, forwarding the signed caller token.
+ * calls it, presenting the short-lived {@code doctor-schedule:validate} service credential.
  */
 @RestController
 @RequestMapping("/internal/doctors/{doctorId}/schedule")
