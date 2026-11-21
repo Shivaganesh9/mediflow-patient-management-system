@@ -136,7 +136,7 @@ Implemented and green: auth, patient, doctor, appointment, medical-record, billi
 ## Future (deferred)
 
 - Lab and pharmacy services (scaffolds only).
-- Service registry / config server (Eureka enabled, no server in repo).
+- Service registry / config server (not implemented; direct service URLs today).
 - Insurance claims, patient self-service portal, FHIR/HL7 interoperability.
 - Analytics aggregation and reporting beyond snapshot storage.
 - Leave approval workflow (leaves currently block bookings as soon as they are created) and

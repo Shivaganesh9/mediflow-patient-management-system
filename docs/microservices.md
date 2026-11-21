@@ -19,7 +19,7 @@
 ## Scaffolds / Not in reactor
 
 - `lab-service` (8090) and `pharmacy-service`: pom + application.yml only, no Java sources. Excluded from the root Maven build by design.
-- `service-registry`, `config-server`, `backend/shared-parent`: documentation placeholders, no code. Services enable the Eureka client (`EUREKA_URL`), but no registry server exists in this repo; the gateway yml routes use direct service URLs instead.
+- `service-registry`, `config-server`, `backend/shared-parent`: documentation placeholders, no code. No discovery server is deployed and no service depends on one; the gateway yml routes use direct service URLs.
 
 ## Service Boundaries
 

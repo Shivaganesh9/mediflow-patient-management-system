@@ -266,7 +266,6 @@ List every required environment variable with a description. Mask secrets.
 - DB_URL: PostgreSQL connection string.
 - DB_USERNAME: Database username.
 - DB_PASSWORD: Database password. Keep masked in logs and CI.
-- EUREKA_URL: Eureka discovery server URL.
 - KAFKA_BOOTSTRAP_SERVERS: Kafka broker address.
 - SERVER_PORT: Optional override for service port.
 - JWT_SECRET: Secret used to sign JWTs. Keep masked and long/random.
@@ -381,7 +380,7 @@ List every required environment variable with a description. Mask secrets.
 - Spring Security: Authentication and authorization.
 - Spring Data JPA: ORM and persistence.
 - Spring Cloud Gateway: API gateway.
-- Eureka: Service discovery.
+- Service discovery: not implemented; services use direct URLs.
 - Kafka: Event-driven communication.
 - JWT libraries: Token creation and validation.
 - Lombok: Boilerplate reduction.

@@ -33,7 +33,7 @@ Root `pom.xml` (`com.mediflow:mediflow-parent`, Java 21, Spring Boot 3.5.0, Spri
 | `notification-service` | 8089 | In-app notifications from Kafka events (idempotent, retry/DLQ) |
 | `medical-record-service` | 8091 | Clinical encounter records + events |
 
-`backend/lab-service` (8090) and `backend/pharmacy-service` are scaffolds only (pom + application.yml, no Java sources) and are NOT in the reactor. `backend/shared-parent/`, `service-registry/`, and `config-server/` are placeholders; services enable the Eureka client but no registry server exists in this repository.
+`backend/lab-service` (8090) and `backend/pharmacy-service` are **unimplemented scaffolds** (pom + application.yml, no Java sources) and are NOT in the reactor. `backend/shared-parent/`, `service-registry/`, and `config-server/` are placeholders. No service discovery or central configuration is deployed: the gateway uses static routes and services call each other through fixed URLs.
 
 ## 4. Layered Service Design
 
@@ -47,13 +47,13 @@ Each service follows `controller → service → repository → entity`, plus `d
 
 ## 6. Communication
 
-- **Synchronous:** REST over HTTP through the gateway; services are called directly by port in local dev. appointment-service additionally calls doctor-service's internal `/internal/doctors/{doctorId}/schedule/validation` before committing a booking/reschedule (caller JWT + correlation id forwarded, 1s/3s timeouts, 5-failure/30s circuit breaker, **fail closed with 503**).
+- **Synchronous:** REST over HTTP through the gateway; services are called directly by port in local dev. appointment-service additionally calls doctor-service's internal `/internal/doctors/{doctorId}/schedule/validation` before committing a booking/reschedule (a short-lived service credential minted by appointment-service from `JWT_SECRET`, scope `doctor-schedule:validate`, plus the correlation id; 1s/3s timeouts, 5-failure/30s circuit breaker, **fail closed with 503**).
 - **Asynchronous:** Kafka events published by appointment/medical-record/billing services and consumed by notification-service (appointment + billing) and analytics-service (appointment + billing + medical-record) (see `docs/kafka-events.md`).
 
 ## 7. Runtime Configuration
 
-- Required env vars: `JWT_SECRET`, `DB_PASSWORD`. Optional: `DB_URL`, `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_HOST`/`REDIS_PORT`, `EUREKA_URL`, `CORS_ALLOWED_ORIGINS`, `DOCTOR_SERVICE_URL`, `CLINIC_TIME_ZONE`, JWT expirations, per-service URLs.
-- Default per-service DBs (`patient_db`, `auth_db`, ...) are overridden by `.env` `DB_URL`. The checked-in `.env` does **not** set `DB_URL`, so services run against per-service DBs by default; set `DB_URL` to point all services at a single shared `mediflow` database if desired.
+- Required env vars: `JWT_SECRET`, `DB_PASSWORD`. Optional: `DB_URL`, `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_HOST`/`REDIS_PORT`, `CORS_ALLOWED_ORIGINS`, `DOCTOR_SERVICE_URL`, `CLINIC_TIME_ZONE`, JWT expirations, per-service URLs.
+- Default per-service DBs (`patient_db`, `mediflow_auth_db`, ...) are overridden by `.env` `DB_URL`. The checked-in `.env` does **not** set `DB_URL`, so services run against per-service DBs by default; set `DB_URL` to point all services at a single shared `mediflow` database if desired.
 - Each of the 9 runnable services has a `Dockerfile` + `.dockerignore` (Temurin 21 JRE). Maven produces a plain jar (used by reactor consumers) plus an executable `<service>-1.0.0-exec.jar` via the Spring Boot `repackage` goal with an `exec` classifier; images copy the `-exec` jar. GitHub Actions (`.github/workflows/ci.yml`) verifies backend tests, frontend build, Playwright, release checks, and all 9 images.
 
 ## 8. Reliability and Observability

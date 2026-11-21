@@ -154,11 +154,6 @@ springdoc:
     description: Single entry point for all MediFlow backend services. Each microservice owns its OpenAPI spec (served at its own /v3/api-docs and /swagger-ui); this central UI aggregates all service specs via the gateway.
     version: 1.0
 
-eureka:
-  client:
-    service-url:
-      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
-
 logging:
   pattern:
     level: "%5p [correlationId:%X{correlationId:-}]"

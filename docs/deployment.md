@@ -36,7 +36,7 @@ Copy `.env.example` → `.env` and set `JWT_SECRET` and `DB_PASSWORD` (no defaul
 | notification-service | 8089 | |
 | medical-record-service | 8091 | `SERVER_PORT` env override |
 
-Service URLs are overridable via env vars (`AUTH_SERVICE_URL`, ...) in the gateway yml. Eureka discovery is configured but no registry exists — services rely on direct URLs.
+Service URLs are overridable via env vars (`AUTH_SERVICE_URL`, ...) in the gateway yml. No discovery server is deployed - services rely on direct URLs.
 
 ## Container Images
 
@@ -67,7 +67,7 @@ Notes:
 
 ## Configuration / Secrets
 
-- Required: `JWT_SECRET`, `DB_PASSWORD`. Optional: `DB_URL`, `DB_USERNAME`, `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_HOST`/`REDIS_PORT`, `EUREKA_URL`, `CORS_ALLOWED_ORIGINS`, `JWT_EXPIRATION`, `JWT_REFRESH_EXPIRATION`, per-service URLs, `SERVER_PORT`.
+- Required: `JWT_SECRET`, `DB_PASSWORD`. Optional: `DB_URL`, `DB_USERNAME`, `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_HOST`/`REDIS_PORT`, `CORS_ALLOWED_ORIGINS`, `JWT_EXPIRATION`, `JWT_REFRESH_EXPIRATION`, per-service URLs, `SERVER_PORT`.
 - **Token revocation (all services):** `SECURITY_REVOCATION_ENABLED=true`, `SECURITY_REVOCATION_FAIL_OPEN=false`, `SECURITY_REVOCATION_KEY_PREFIX=mediflow:revoke:`, `SECURITY_REVOCATION_MARKER_TTL=7d`. All services must point at the same Redis. Redis runs with AOF on a named volume; the production overlay adds `--appendfsync everysec` and `--maxmemory-policy noeviction`. If the volume is lost, rotate `JWT_SECRET` (revoked tokens become valid again until their 15-minute expiry otherwise).
 - `ddl-auto: validate` everywhere; schemas come from Flyway migrations.
 - **Pool/query tuning** (all services): `DB_POOL_MAX_SIZE` (10), `DB_POOL_MIN_IDLE` (2), `DB_POOL_CONNECTION_TIMEOUT_MS` (3000), `DB_LEAK_DETECTION_MS` (20000), `JPA_SHOW_SQL` (false), `MAX_PAGE_SIZE` (100).

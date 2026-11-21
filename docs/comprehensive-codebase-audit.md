@@ -69,7 +69,7 @@ The current frontend language, such as "Care operations hub," indicates that the
 The backend uses a domain-oriented microservice layout:
 
 - `common-library`: shared DTOs, response types, exceptions, security, constants, and utilities.
-- `api-gateway`: Spring Cloud Gateway and Eureka client.
+- `api-gateway`: Spring Cloud Gateway.
 - `auth-service`: Spring Security, JWT, users, roles, and refresh tokens.
 - `patient-service`: patient CRUD and patient data persistence.
 - `doctor-service`: doctor/provider domain.
@@ -99,7 +99,7 @@ This is currently a presentation prototype rather than a connected client:
 |---|---|---|
 | Backend language | Java 21 | Root compiler release is configured in [pom.xml](../pom.xml#L25-L35). |
 | Backend framework | Spring Boot 3.5.0 | Managed by the root POM. |
-| Cloud patterns | Spring Cloud 2024.0.0 | Gateway and Eureka client are present. |
+| Cloud patterns | Spring Cloud 2025.0.0 | Gateway is present; no discovery or config server is deployed. |
 | Security | Spring Security, BCrypt, JJWT | Auth policy is defined in [SecurityConfig.java](../backend/auth-service/src/main/java/com/mediflow/auth/config/SecurityConfig.java). |
 | Persistence | Spring Data JPA and PostgreSQL | Database configuration is repeated per service. |
 | Schema migration | Flyway | Explicitly enabled in auth; broader migration coverage is incomplete. |
@@ -132,7 +132,6 @@ Create a root [`.env.example`](../.env.example) containing masked values for:
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, and database provisioning settings
 - Per-service `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`
 - `KAFKA_BOOTSTRAP_SERVERS`
-- `EUREKA_URL`
 - `JWT_SECRET`, `JWT_EXPIRATION`, and `JWT_REFRESH_EXPIRATION`
 - Frontend API base URL, such as `VITE_API_BASE_URL`
 
@@ -336,7 +335,7 @@ MediFlow has a sensible domain direction and a useful initial service decomposit
 
 ### Still outstanding (unchanged)
 - No outbox pattern or retry policy for producers; analytics does not consume `medical-record.updated.v1`.
-- No service registry/config server; Eureka configured but no server in repo.
+- No service registry/config server; services use direct URLs.
 - No production deployment (Kubernetes/registry/CD), monitoring stack, or rate limiting. Container images and CI verification were added 2026-08-15 (see below).
 - Admin/staff-created patient/doctor profiles do not synchronously validate the referenced Auth user.
 - Frontend integration was completed 2026-08-16 (API client with JWT refresh, role-based routing, pages wired to `/api/v1/**`) — the frontend-not-connected item below is resolved.

@@ -1,8 +1,8 @@
 ﻿# Caching
 
 > **Snapshot notice.** This file describes design ideas and may not match the implemented
-> system. For code-verified documentation see [../architecture.md](../architecture.md) and
-> [../microservices.md](../microservices.md).
+> system. For code-verified documentation see [../architecture.md](../../architecture.md) and
+> [../microservices.md](../../microservices.md).
 
 
 ## Strategy

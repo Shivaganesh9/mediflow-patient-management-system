@@ -1,8 +1,8 @@
 ﻿# Security
 
 > **Snapshot notice.** This file is retained for historical context and predates the current
-> implementation in places. For code-verified documentation use [../security.md](../security.md) and
-> the primary docs linked from [../architecture.md](../architecture.md).
+> implementation in places. For code-verified documentation use [../security.md](../../security.md) and
+> the primary docs linked from [../architecture.md](../../architecture.md).
 
 
 *Status: reflects the implemented codebase (updated 2026-11-13, Milestone 3).*

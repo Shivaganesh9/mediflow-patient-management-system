@@ -38,7 +38,7 @@ Enterprise patient-management platform: Spring Boot 3 microservices + React/TS +
 - Ports (from service configs): api-gateway 8080, auth 8081, patient 8083, appointment 8084, doctor 8085, billing 8087, analytics 8088, notification 8089, lab 8090, medical-record 8091.
 - `backend/common-library` = shared lib (BaseEntity, ApiResponse, PagedResponse, GlobalExceptionHandler, DomainEvent, enums/constants).
 - `backend/shared-parent/` is an empty placeholder, NOT in the reactor — root `pom.xml` is the real parent.
-- `service-registry/` and `config-server/` are README-only placeholders (no code); services enable the Eureka client, but no registry server exists in this repo.
+- `service-registry/` and `config-server/` are README-only placeholders (no code); no discovery server is deployed — the gateway uses static routes and services use direct URLs.
 - `lab-service` (8090) and `pharmacy-service` are scaffolds — pom + application.yml only, no Java sources.
 - Each service: layered `controller/service/repository/entity/dto/mapper/security` packages; depends on `common-library`.
 

@@ -303,6 +303,7 @@ check('no private keys or provider tokens are committed', () => {
   for (const file of gitFiles()) {
     if (!TEXT_FILE.test(file)) continue;
     if (file === '.env.example') continue;
+    // Lockfiles and the archived audit HTML contain scanner-shaped fixtures.
     if (/(package-lock\.json|comprehensive-codebase-audit\.html)$/.test(file)) continue;
     const text = read(file);
     for (const pattern of patterns) {

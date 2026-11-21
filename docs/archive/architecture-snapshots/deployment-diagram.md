@@ -1,8 +1,8 @@
 ﻿# Deployment Diagram
 
 > **Snapshot notice.** This file is retained for historical context and predates the current
-> implementation in places. For code-verified documentation use [../production-deployment.md](../production-deployment.md) and
-> the primary docs linked from [../architecture.md](../architecture.md).
+> implementation in places. For code-verified documentation use [../production-deployment.md](../../production-deployment.md) and
+> the primary docs linked from [../architecture.md](../../architecture.md).
 
 
 *Status: reflects the implemented codebase (2026-08-15).*

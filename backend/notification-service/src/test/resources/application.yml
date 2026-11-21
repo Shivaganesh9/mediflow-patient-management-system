@@ -29,9 +29,6 @@ jwt:
 cors:
   allowed-origins: http://localhost:5173
 
-eureka:
-  client:
-    enabled: false
 
 # Unit/integration tests run without Redis; revocation is covered by the
 # Testcontainers-backed redis revocation tests.

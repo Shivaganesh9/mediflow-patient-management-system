@@ -1,8 +1,8 @@
 ﻿# API Design
 
 > **Snapshot notice.** This file is retained for historical context and predates the current
-> implementation in places. For code-verified documentation use [../api-design.md](../api-design.md) and
-> the primary docs linked from [../architecture.md](../architecture.md).
+> implementation in places. For code-verified documentation use [../api-design.md](../../api-design.md) and
+> the primary docs linked from [../architecture.md](../../architecture.md).
 
 
 *Status: reflects the implemented codebase (2026-08-13).*

@@ -66,9 +66,9 @@ Key properties:
 | `notification-service` | 8089 | Kafka-fed in-app notifications |
 | `medical-record-service` | 8091 | Clinical records + metadata-only audit history |
 
-`lab-service` (8090) and `pharmacy-service` are scaffolds with no Java sources. `service-registry`
-and `config-server` are README-only placeholders; services enable the Eureka client but no registry
-server exists in this repository.
+`lab-service` (8090) and `pharmacy-service` are unimplemented scaffolds with no Java sources.
+`service-registry` and `config-server` are README-only placeholders; no discovery server is deployed
+and services use direct URLs.
 
 ## Repository structure
 

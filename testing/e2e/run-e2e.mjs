@@ -163,9 +163,6 @@ function serviceEnvironment(secrets) {
     KAFKA_BOOTSTRAP_SERVERS: `${DB_HOST}:${KAFKA_PORT}`,
     CLINIC_TIME_ZONE: 'UTC',
     TZ: 'UTC',
-    EUREKA_CLIENT_ENABLED: 'false',
-    EUREKA_CLIENT_REGISTER_WITH_EUREKA: 'false',
-    EUREKA_CLIENT_FETCH_REGISTRY: 'false',
     HEALTH_SHOW_DETAILS: 'never',
     // The browser suite owns the frontend origin; the gateway is the only CORS owner.
     CORS_ALLOWED_ORIGINS: 'http://127.0.0.1:3100',
