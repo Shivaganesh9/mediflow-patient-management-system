@@ -5,9 +5,9 @@ one place and no layer duplicates another. Use the lightest layer that can answe
 
 | Layer | Command | Needs | Owns |
 |---|---|---|---|
-| **A. Lightweight local** | `.\scripts\test-light.ps1` | Node 20+, Chromium | UI behaviour, build integrity, static release rules |
+| **A. Lightweight local** | `.\scripts\test-light.ps1` | Node 24, Chromium | UI behaviour, build integrity, static release rules |
 | **B. Integration (Maven)** | `mvn -B -ntp verify` | JDK 21, Docker (Testcontainers) | Service behaviour, SQL constraints, security, Kafka idempotency |
-| **C. Cross-service E2E** | `node testing/e2e/run-e2e.mjs --profile=core\|full` | Docker, JDK 21, Node 20+ | Seams: gateway routing, service-to-service auth, Kafka fan-out, shared revocation |
+| **C. Cross-service E2E** | `node testing/e2e/run-e2e.mjs --profile=core\|full` | Docker, JDK 21, Node 24 | Seams: gateway routing, service-to-service auth, Kafka fan-out, shared revocation |
 | **D. Release validation** | `check-release-readiness.mjs`, `smoke.mjs` | Node (static) / Docker + JDK 21 | Production config, secrets, images, profile-less boot, recovery |
 | **E. CI** | GitHub Actions | nothing local | Runs A–D on a clean machine, publishes logs/artifacts |
 

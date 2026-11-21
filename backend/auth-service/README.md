@@ -95,7 +95,6 @@ and auto-skip when Docker is unavailable; ordinary tests set `security.revocatio
 | `AUTH_PASSWORD_RESET_TOKEN_TTL` | `30m` | Password-reset token lifetime |
 | `AUTH_PASSWORD_RESET_EXPOSE_TOKEN` | `false` | Return the raw reset token (dev/test only; no mail delivery) |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated origins |
-| `EUREKA_URL` | `http://localhost:8761/eureka/` | Discovery (unused until registry exists) |
 
 ## Dependencies
 `common-library`, Spring Web/Data JPA/Security/Validation/Actuator/Data Redis, PostgreSQL driver, Flyway,

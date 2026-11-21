@@ -18,7 +18,7 @@ what each layer proves, log locations and CI artifacts — is in
 | Docker + Compose v2 | Runs throwaway PostgreSQL 16, Redis 7 and Kafka 4.0 containers |
 | JDK 21 | Services run from their executable jars |
 | Maven only with `--build` | Or package once with `mvn -B -ntp -DskipTests package` |
-| Node 20+ (CI uses 24 LTS) | The runner uses the built-in `fetch`, so there are **no npm dependencies** |
+| Node 24 (CI uses 24 LTS) | The runner uses the built-in `fetch`, so there are **no npm dependencies** |
 | Free ports | 54321, 56379, 59092 and 18080–18091 (see below) |
 
 Nothing is read from `.env`: `JWT_SECRET`, the database password and every port mapping are generated

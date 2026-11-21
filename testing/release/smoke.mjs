@@ -121,7 +121,7 @@ function printHelp() {
             for memory-constrained machines
   -h, --help
 
-Requires: Docker + Compose v2, JDK 21, Node 20+, free ports 54322/63792/59092 and 17080-17091.`);
+Requires: Docker + Compose v2, JDK 21, Node 24, free ports 54322/63792/59092 and 17080-17091.`);
 }
 
 async function check(name, fn) {

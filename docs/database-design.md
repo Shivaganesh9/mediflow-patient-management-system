@@ -105,5 +105,59 @@ Each producer service owns an identical `outbox_events` table (appointment `V4`,
 
 ## 12. Tests
 
+## 13. Local database operations
+
+### Connecting (`psql`)
+
+Credentials come from `.env` (`POSTGRES_USER`/`POSTGRES_PASSWORD` for the container,
+`DB_USERNAME`/`DB_PASSWORD` for services). PostgreSQL runs in Docker on `localhost:5432`; on first
+boot `infrastructure/docker/postgres/init-databases.sql` creates the eight databases, so manual
+creation is normally unnecessary.
+
+```bash
+psql -U postgres -h localhost -c "CREATE DATABASE mediflow_auth_db"    # only if missing
+psql -U postgres -h localhost -d mediflow_auth_db -c "\dt"             # list tables
+psql -U postgres -h localhost -d mediflow_auth_db -c "select * from users"
+psql -U postgres -h localhost -d mediflow_auth_db -c "\d+ patients"    # describe a table
+```
+
+On Windows use the full client path, for example
+`"C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -h localhost -d mediflow_auth_db`.
+DBeaver users can connect to `localhost:5432`, enable *Show all databases*, and inspect
+**Schemas → public → Tables** and `flyway_schema_history` per database.
+
+### Migration workflow
+
+1. Add `V<N>__description.sql` with the next number for that service. Never edit an applied
+   migration — it breaks `flyway_schema_history` checksums.
+2. Put it under `src/main/resources/db/migration/` (or `.../migration/notification` /
+   `.../migration/analytics` for the two consumers).
+3. Restart the service: validation and the migration run automatically.
+4. Verify with `select * from flyway_schema_history order by installed_rank`.
+
+### Clean reseed of one service
+
+```bash
+psql -U postgres -h localhost -c "DROP DATABASE patient_db WITH (FORCE)"
+psql -U postgres -h localhost -c "CREATE DATABASE patient_db"
+mvn -pl backend/patient-service -am spring-boot:run -Dspring-boot.run.profiles=dev,seed
+```
+
+Migrations recreate the schema and the `seed` profile inserts deterministic, idempotent rows.
+Seeding never runs under `dev` alone or in tests. Cross-service ids are pinned in
+`common-library` → `com.mediflow.common.seed.DevSeedData` (auth `users.id` equals the
+`patientId`/`doctorId` business keys).
+
+### Gotchas
+
+- `ddl-auto: validate` fails on any schema drift; the migration is the source of truth.
+- Never run the consumer services with the dependency jars' bundled migrations enabled — keep the
+  scoped `spring.flyway.locations`.
+- PostgreSQL binds a `null` String parameter as `bytea` when a query calls `lower(:param)`; cast it
+  (`lower(cast(:param as string))`) or the query fails with `lower(bytea) does not exist`.
+- New columns require a migration, not only an entity change.
+
+## 14. Tests
+
 - Unit/service tests use **H2 in PostgreSQL mode** (`create-drop`, Flyway disabled) for patient/doctor/auth/appointment/billing/notification services. H2 does not implement PostgreSQL exclusion constraints, so the database-level slot guarantee is covered separately (next bullet).
 - `appointment-service` (`AppointmentSlotConcurrencyIntegrationTest`), `billing-service` (`BillingIntegrityIntegrationTest`), `analytics-service`, `medical-record-service` and `notification-service` integration tests use **Testcontainers PostgreSQL 16** with Flyway enabled, `ddl-auto: validate` and a Docker guard (`disabledWithoutDocker = true`); analytics and notification tests also set the JVM default timezone to UTC (pgjdbc rejects non-UTC zones on PG16). These prove the migrations and the concurrency/idempotency guarantees against a real database.

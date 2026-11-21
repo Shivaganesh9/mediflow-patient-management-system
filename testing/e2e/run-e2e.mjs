@@ -15,7 +15,7 @@
  *   node testing/e2e/run-e2e.mjs --build         # package the jars first
  *   node testing/e2e/run-e2e.mjs --keep          # leave the stack running for debugging
  *
- * Requirements: Docker with Compose v2, JDK 21, Node 20+, Maven (only with --build).
+ * Requirements: Docker with Compose v2, JDK 21, Node 24, Maven (only with --build).
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';

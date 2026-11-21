@@ -1,7 +1,7 @@
 # Getting Started (Windows-first)
 
 This is the authoritative setup guide for running MediFlow on a developer workstation. It targets
-**Windows 10/11 + PowerShell 5.1+**, JDK 21, Maven, Node 20+, and Docker Desktop. Linux/macOS users
+**Windows 10/11 + PowerShell 5.1+**, JDK 21, Maven, Node 24 LTS, and Docker Desktop. Linux/macOS users
 can run the same commands (use `bash` and forward slashes).
 
 > MediFlow is a reference/demo platform. It is **not approved for real patient data**. Use synthetic
@@ -13,7 +13,7 @@ can run the same commands (use `bash` and forward slashes).
 |---|---|---|
 | JDK | 21 (Temurin recommended) | `java -version` must print 21 |
 | Maven | 3.9+ | There is **no Maven wrapper**; a system `mvn` is required |
-| Node.js | 20+ (LTS) | Includes `npm`; `.nvmrc` pins 24 LTS, CI uses 24, `engines` requires 20+ |
+| Node.js | 24 LTS | Includes `npm`; `.nvmrc` pins 24, CI uses 24, `engines` requires `>=24.0.0` |
 | Docker Desktop | Current, WSL2 backend | Runs PostgreSQL 16, Redis 7, Kafka 4.0 |
 | PowerShell | 5.1+ | The helper scripts require 5.1 |
 | RAM | 8 GB minimum | See the low-resource notes below |
@@ -220,7 +220,7 @@ Deterministic accounts (defined in `backend/common-library/.../seed/DevSeedData.
 | SUPPORT | `support` | `Support@123` |
 
 Seed data is idempotent (deterministic IDs). See
-[database-dev-guide.md](database-dev-guide.md) §4 for a clean reseed.
+[database-design.md](database-design.md) §13 for a clean reseed.
 
 > Do not use these credentials anywhere outside a local, synthetic dataset.
 
@@ -270,7 +270,7 @@ A lightweight end-to-end self-check of the repository (no JVMs) is:
 | Login works but lists are empty | You started services without `-Profiles dev,seed`, so no seed rows exist. |
 | `401` on every request after logout | Expected: logout revokes the refresh-token family and blacklists the presented access token in Redis. Sign in again. |
 | CORS error in the browser | The gateway allow-list defaults to `http://localhost:3000`. Set `CORS_ALLOWED_ORIGINS` to your real origin. |
-| Flyway error mentioning the wrong service's tables | `notification-service`/`analytics-service` must keep their scoped `spring.flyway.locations` (see [database-dev-guide.md](database-dev-guide.md)). |
+| Flyway error mentioning the wrong service's tables | `notification-service`/`analytics-service` must keep their scoped `spring.flyway.locations` (see [database-design.md](database-design.md) §13). |
 | Everything is slow / Docker kills JVMs | 8 GB is tight. Run fewer services, use the demo, or use GitHub Actions / `--services=core`. |
 | Frontend `npm install` fails behind a proxy | Configure `npm config set proxy`/`https-proxy` or use the corporate registry mirror. |
 | `scripts/*.ps1` blocked | Run `powershell -ExecutionPolicy Bypass -File .\scripts\run-service.ps1 -Service auth-service`. |
@@ -281,5 +281,5 @@ A lightweight end-to-end self-check of the repository (no JVMs) is:
 - [testing.md](testing.md) — local checks, Testcontainers, cross-service E2E, release validation, CI.
 - [demo-mode.md](demo-mode.md) — frontend-only synthetic data and its guarantees.
 - [production-deployment.md](production-deployment.md) — single Linux VM with Docker Compose, HTTPS, backups.
-- [architecture.md](architecture.md), [microservices.md](microservices.md), [features.md](features.md) — design and feature inventory.
+- [PROJECT_GUIDE.md](PROJECT_GUIDE.md) — architecture, services, data, security, workflows, CI and roadmap.
 - [runbook.md](runbook.md) — incidents, recovery, SQL.

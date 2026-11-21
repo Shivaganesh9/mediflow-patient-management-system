@@ -121,7 +121,6 @@ Docker) to prove the slot exclusion constraint and the `23P01` → 409 mapping.
 | `DOCTOR_SERVICE_URL` | `http://localhost:8085` | Schedule validation target |
 | `CLINIC_TIME_ZONE` | `UTC` | Must match medical-record-service |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Browser origins |
-| `EUREKA_URL` | `http://localhost:8761/eureka/` | Discovery (unused) |
 
 ## Dependencies
 `common-library`, Spring Web/Data JPA/Security/Validation/Actuator, PostgreSQL, Flyway, spring-kafka,

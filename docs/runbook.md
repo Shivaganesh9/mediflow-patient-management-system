@@ -2,7 +2,7 @@
 
 Practical guide for running, verifying, and troubleshooting MediFlow locally.
 
-> Companion to `docs/deployment.md` (deployment overview) and `docs/architecture.md` (system overview). Service-specific details live in each service's `README.md`.
+> Companion to `docs/PROJECT_GUIDE.md` (system, deployment and workflow overview) and the specialist documents it links. Service-specific details live in each service's `README.md`.
 
 ## 1. Start infrastructure
 

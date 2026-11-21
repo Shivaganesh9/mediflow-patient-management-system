@@ -433,5 +433,5 @@ Keep the previous images on the VM (or in the transfer directory) until the new 
 - Prometheus/Grafana server, distributed tracing, centralized logging, rate limiting or WAF.
 - Encryption at rest beyond the provider's disk encryption; TLS terminates at nginx.
 
-See [deployment.md](deployment.md) for the image/CI details and
+See [PROJECT_GUIDE.md](PROJECT_GUIDE.md#15-github-actions-and-ci) for the image/CI details and
 [testing.md](testing.md) for how the production configuration is validated before release.

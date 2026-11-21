@@ -21,7 +21,7 @@ Enterprise patient-management platform: Spring Boot 3 microservices + React/TS +
 - Frontend: `cd frontend/mediflow-ui && npm run dev` (Vite dev server, port 3000 — the gateway is the single CORS owner for browser traffic; its allow-list defaults to `http://localhost:3000`, override with `CORS_ALLOWED_ORIGINS` if you change the port. A global `DedupeResponseHeader` default filter collapses CORS headers from downstream services so proxied responses carry exactly one `Access-Control-Allow-Origin`); build: `npm run build` (`tsc -b && vite build`).
 - Browser E2E (Playwright, mocked API, Vite on 127.0.0.1:3100): `cd frontend/mediflow-ui && npm run test:e2e` (43 tests: 38 chromium + 5 demo, ~50s); `npm run typecheck:e2e`; `npm run test:e2e:headed|:report`. Chromium install: `npm run test:e2e:install`.
 - Demo-mode tests (`vite --mode demo` on 127.0.0.1:3101, no route mocking): `npm run test:e2e:demo` (5 tests).
-- Cross-service E2E (Docker + JDK 21 + Node 20+, no npm deps): `node testing/e2e/run-e2e.mjs --profile=core|full [--build] [--keep]`. Throwaway PostgreSQL/Redis/Kafka on 54321/56379/59092, services on 1808x, generated secrets, seed profile; logs + `journeys.json` in `testing/e2e/.logs`. See `testing/e2e/README.md`.
+- Cross-service E2E (Docker + JDK 21 + Node 24, no npm deps): `node testing/e2e/run-e2e.mjs --profile=core|full [--build] [--keep]`. Throwaway PostgreSQL/Redis/Kafka on 54321/56379/59092, services on 1808x, generated secrets, seed profile; logs + `journeys.json` in `testing/e2e/.logs`. See `testing/e2e/README.md`.
 - Release validation: `node testing/release/check-release-readiness.mjs` (static, 31 checks) and `node testing/release/smoke.mjs --build` (production configuration, no Spring profile; `--services=core` on low-memory machines). Infra ports 54322/63792/59092, services 17080–17091.
 - Infra: `docker compose up -d` (PostgreSQL 16 + Redis 7 + Kafka 4.0/KRaft). Requires `.env` copied from `.env.example`; compose aborts if `POSTGRES_*` vars are missing.
 - Frontend-only demo (no backend): `.\scripts\start-demo.ps1` or `cd frontend/mediflow-ui; npm run demo`. See `docs/demo-mode.md`.
@@ -34,6 +34,7 @@ Enterprise patient-management platform: Spring Boot 3 microservices + React/TS +
 - `spring-boot-maven-plugin` `repackage` is bound with an `exec` classifier in every runnable service pom: Maven produces a plain `<service>-1.0.0.jar` (used as a reactor dependency by consumer services) plus an executable `<service>-1.0.0-exec.jar`; Dockerfiles COPY the `-exec` jar. Do NOT remove the classifier — consumers compile against the plain jar.
 
 ## Architecture / layout
+- `docs/PROJECT_GUIDE.md` is the consolidated project-level reference (architecture, services, data, Kafka/outbox, security, workflows, setup, testing, CI, deployment, risks, roadmap); specialist documents are linked from it.
 - Maven reactor rooted at root `pom.xml` (`com.mediflow:mediflow-parent`); modules under `backend/`.
 - Ports (from service configs): api-gateway 8080, auth 8081, patient 8083, appointment 8084, doctor 8085, billing 8087, analytics 8088, notification 8089, lab 8090, medical-record 8091.
 - `backend/common-library` = shared lib (BaseEntity, ApiResponse, PagedResponse, GlobalExceptionHandler, DomainEvent, enums/constants).

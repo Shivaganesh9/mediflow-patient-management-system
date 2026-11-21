@@ -82,7 +82,6 @@ Unit tests for `DoctorService`, `DoctorScheduleService`, `AuthServiceIdentityVer
 | `DB_PASSWORD` | **none (required)** | DB password |
 | `JWT_SECRET` | **none (required)** | Must match auth-service secret |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Browser origins |
-| `EUREKA_URL` | `http://localhost:8761/eureka/` | Discovery (unused) |
 
 ## Dependencies
 `common-library`, Spring Web/Data JPA/Security/Validation/Actuator, PostgreSQL, Flyway, jjwt, springdoc, MapStruct.

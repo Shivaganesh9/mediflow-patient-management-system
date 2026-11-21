@@ -34,7 +34,8 @@ Dev server: `3000` (Vite). Production is served as a static build.
 - Role-scoped list queries: PATIENT forces `patientId = uid`, DOCTOR forces `doctorId = uid` on appointments/billing/records.
 
 ## Run locally
-Requires **Node.js 20+** (the repository `.nvmrc` pins 24 LTS, which is what CI uses).
+Requires **Node.js 24 LTS** (the repository `.nvmrc` pins 24, which is what CI uses, and
+`engines.node` requires `>=24.0.0`).
 
 ```bash
 cd frontend/mediflow-ui

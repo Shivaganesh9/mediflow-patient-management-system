@@ -1,7 +1,7 @@
 /**
  * Minimal HTTP helpers for the cross-service E2E journeys.
  *
- * Node's global fetch is used (Node 20+), so the suite has no dependency to install. Every helper
+ * Node's global fetch is used (Node 24), so the suite has no dependency to install. Every helper
  * returns the parsed envelope and never logs a response body: auth responses contain tokens.
  */
 
