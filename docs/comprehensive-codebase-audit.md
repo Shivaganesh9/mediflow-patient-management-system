@@ -1,5 +1,10 @@
 # MediFlow Comprehensive Codebase Audit
 
+> **Historical snapshot (2026-08-09).** This audit predates Milestones 5–8 and is retained for
+> context. For the current, code-verified state see [architecture.md](architecture.md),
+> [microservices.md](microservices.md), [features.md](features.md), [security.md](security.md) and
+> [testing.md](testing.md).
+
 **Audit date:** 2026-08-09  
 **Scope:** Current workspace contents, including backend, frontend, Docker, database, infrastructure, and documentation.  
 **Audience:** Engineering, product, security, platform, and clinical operations stakeholders.

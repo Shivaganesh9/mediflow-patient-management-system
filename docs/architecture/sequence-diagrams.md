@@ -1,5 +1,10 @@
 ﻿# Sequence Diagrams
 
+> **Snapshot notice.** This file describes design ideas and may not match the implemented
+> system. For code-verified documentation see [../architecture.md](../architecture.md) and
+> [../microservices.md](../microservices.md).
+
+
 ## Patient Registration
 1. User submits registration form to the gateway → auth-service.
 2. auth-service creates the user (role PATIENT by default) and returns JWT access + refresh tokens.

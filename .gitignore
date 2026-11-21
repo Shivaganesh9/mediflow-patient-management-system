@@ -1,33 +1,26 @@
-﻿node_modules/
-dist/
-.vscode/
+﻿# Secrets and local environment (never commit real values)
 .env
-*.log
+.env.*
+!.env.example
+!.env.demo
+!.env.prod.example
+
+# Production deployment secrets and TLS material
+deploy/certs/
 
 # Java / Maven
 target/
 *.class
 
-# Environment / secrets
-.env
-.env.*
-!.env.example
+# Node
+node_modules/
+dist/
+npm-debug.log*
+*.tsbuildinfo
 
 # Logs
 logs/
 *.log
-
-# IntelliJ
-.idea/
-*.iml
-
-# VS Code
-.vscode/
-
-# Node
-node_modules/
-npm-debug.log*
-*.tsbuildinfo
 
 # Playwright browser suite
 frontend/mediflow-ui/e2e/test-results/
@@ -38,3 +31,10 @@ frontend/mediflow-ui/playwright-report/
 testing/e2e/.logs/
 testing/release/.logs/
 testing/release/.artifacts/
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db

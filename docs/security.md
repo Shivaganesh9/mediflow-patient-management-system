@@ -1,6 +1,6 @@
 # MediFlow Security
 
-*Status: reflects the implemented codebase (updated 2026-11-14, Milestone 4 - production readiness & reliability).*
+*Status: reflects the implemented codebase (updated 2026-11-20, Milestone 8 - demo mode & single-VM deployment).*
 
 ## 1. Authentication model
 
@@ -180,5 +180,64 @@ Configuration: `services.auth-service-url` (`AUTH_SERVICE_URL`, default `http://
 - Per-IP/global rate limiting, bot detection and CAPTCHA are not implemented (only per-account temporary lockout).
 - Auth-service is still the only writer of revocation state; the design supports any service writing to the shared registry.
 - `try` with `fail-open=true` is documented but unsafe; production must keep fail-closed and run Redis highly available.
-- HTTPS enforcement, TLS termination, secret management integration and service-to-service mutual auth remain deployment-level concerns.
-- Redis is a new mandatory runtime dependency for token validation (fail-closed => 503 when down).
+- HTTPS enforcement, TLS termination, secret management integration and service-to-service mutual auth remain deployment-level concerns. M8 documents nginx TLS termination and external `.env.prod` secrets but does not add mTLS.
+- Redis is a mandatory runtime dependency for token validation (fail-closed => 503 when down). M8 adds AOF (`everysec`) on a named volume for restart durability; losing the volume still drops markers, so already-issued tokens remain valid until expiry (15 minutes by default). Rotate `JWT_SECRET` after such a loss.
+
+## 13. Internal schedule credential (M7)
+
+`appointment-service` validates every booking/reschedule against doctor-service's
+`/internal/doctors/{doctorId}/schedule/validation`, which is not gateway-routed. The caller no longer
+forwards a user token: appointment-service mints a **30-second service JWT** with
+`iss=appointment-service`, `aud=doctor-service`, `type=service`, `scope=doctor-schedule:validate` and
+a `jti`. The signing key is derived from `JWT_SECRET` with the context
+`mediflow.internal-service-token.v1` (HMAC-SHA256), so no additional secret exists and a user token
+can never be replayed as a service credential. doctor-service accepts only the exact issuer, audience
+and scope:
+
+| Presented credential | Result |
+|---|---|
+| Valid service credential | allowed |
+| User access token (any role) | 403 |
+| Missing, malformed, expired, wrong issuer/audience | 401 |
+| A token signed with the raw `JWT_SECRET` but no service claims | 403 |
+
+`InternalDoctorScheduleSecurityTest` (9 tests) and the E2E `internal` journey cover both directions.
+Every service's `SecurityConfig` also permits the `ERROR` dispatcher so a filter-chain denial keeps
+its 403 instead of degrading to a 401 (`ErrorDispatchSecurityTest`).
+
+## 14. Demo mode and production isolation (M8)
+
+- **Demo mode is local-only.** It is a build-time flag (`.env.demo`, `vite --mode demo`). A production
+  build with `VITE_DEMO_MODE=true` is refused by `vite.config.ts`; the installer is dynamically
+  imported and the banner is lazy-loaded, so a normal `dist` contains no demo code or strings.
+- **No auth bypass.** The banner signs in through `AuthContext.login` with synthetic accounts; route
+  guards, role checks and the API client are unchanged. The synthetic API only exists in demo builds.
+- **Synthetic data only.** The demo's records are generated in memory; nothing persists server-side
+  and nothing is read from a real database.
+- **Production surface.** `docker-compose.prod.yml` publishes only the nginx edge (80/443). PostgreSQL,
+  Redis, Kafka and all nine services are private (`expose` only). nginx proxies only the SPA and
+  `/api/`; `/actuator`, `/v3/api-docs`, `/swagger-ui` and `/internal/**` return 404 at the edge.
+- **Production configuration.** The overlay pins `SPRING_PROFILES_ACTIVE: ""` (no `dev`/`seed`),
+  `HEALTH_SHOW_DETAILS=never`, `JPA_SHOW_SQL=false`, `SECURITY_REVOCATION_FAIL_OPEN=false` and
+  `AUTH_PASSWORD_RESET_EXPOSE_TOKEN=false`. Secrets come from `.env.prod` (git-ignored, `chmod 600`);
+  Compose aborts if `POSTGRES_USER`, `POSTGRES_PASSWORD` or `JWT_SECRET` is missing.
+- **Verification.** 31 release-readiness checks assert the demo/production isolation and the overlay's
+  port/secret/profile posture; CI validates the merged production Compose configuration.
+
+## 15. CI supply chain (M8)
+
+- **Least privilege.** `.github/workflows/ci.yml` sets `permissions: contents: read` for the whole
+  workflow; no job writes to the repository, packages, issues or PRs, so `GITHUB_TOKEN` is read-only.
+- **No repository secrets in CI.** The workflows use only `GITHUB_TOKEN` (implicit) and throwaway
+  placeholders (`ci-only-placeholder`) for Compose validation. Runtime secrets are generated inside the
+  E2E/smoke scripts, never stored.
+- **Pinned action majors.** `actions/checkout@v7`, `actions/setup-java@v6`, `actions/setup-node@v7`,
+  `actions/upload-artifact@v7` — the current stable majors verified against the GitHub API. Upgrades are
+  proposed by Dependabot (`.github/dependabot.yml`) as reviewed PRs, not auto-merged.
+- **Runtimes.** JDK 21 (Temurin) with Maven caching; Node 24 LTS (root `.nvmrc`) with npm caching.
+  `mvn -B -ntp -U clean verify` runs the full lifecycle, so tests cannot be skipped by a stale cache.
+- **Artifacts on failure only.** Playwright reports, cross-service E2E logs and release-smoke logs are
+  uploaded with `if-no-files-found: ignore`, retained 7 days, and contain no secrets (scripts redact
+  generated values).
+- **Secret scanning.** A Gitleaks full-history scan (`--log-opts="--all"`) over all 21 commits reports no
+  leaks; the only matches in the working tree are local, git-ignored files (`.env`, `target/surefire-reports`, `logs/`).

@@ -5,8 +5,11 @@ Real-HTTP end-to-end journeys across the MediFlow services. This suite is the on
 doctor-service schedule contract, payment idempotency replay, Kafka fan-out into
 notification-service/analytics-service, and the shared Redis token-revocation registry.
 
-Browser workflows live in `frontend/mediflow-ui/e2e` (Playwright, mocked API). Per-service behaviour
-is covered by the Maven integration tests. Nothing here duplicates those suites.
+Browser workflows live in `frontend/mediflow-ui/e2e` (Playwright; 38 mocked-API tests in the `chromium`
+project plus 5 tests of the in-browser demo in the `demo` project). Per-service behaviour is covered by
+the Maven integration tests. Nothing here duplicates those suites. The full verification matrix —
+what each layer proves, log locations and CI artifacts — is in
+[`docs/testing.md`](../../docs/testing.md).
 
 ## What it needs
 
@@ -15,7 +18,7 @@ is covered by the Maven integration tests. Nothing here duplicates those suites.
 | Docker + Compose v2 | Runs throwaway PostgreSQL 16, Redis 7 and Kafka 4.0 containers |
 | JDK 21 | Services run from their executable jars |
 | Maven only with `--build` | Or package once with `mvn -B -ntp -DskipTests package` |
-| Node 20+ | The runner uses the built-in `fetch`, so there are **no npm dependencies** |
+| Node 20+ (CI uses 24 LTS) | The runner uses the built-in `fetch`, so there are **no npm dependencies** |
 | Free ports | 54321, 56379, 59092 and 18080–18091 (see below) |
 
 Nothing is read from `.env`: `JWT_SECRET`, the database password and every port mapping are generated
@@ -38,8 +41,9 @@ node testing/e2e/run-e2e.mjs --help
 ```
 
 Exit code is `0` only when every journey passes. A machine-readable summary is written to
-`testing/e2e/.logs/journeys.json`, and each service's stdout/stderr goes to
-`testing/e2e/.logs/<service>.log`.
+`testing/e2e/.logs/journeys.json`, each service's stdout/stderr goes to
+`testing/e2e/.logs/<service>.log`, and both are uploaded as the `cross-service-e2e-logs` CI artifact
+when the `cross-service-e2e` job fails on `main`.
 
 Environment overrides:
 

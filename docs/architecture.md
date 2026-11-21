@@ -1,6 +1,6 @@
 # MediFlow Architecture
 
-*Status: reflects the implemented codebase (2026-11-17, Milestone 6).*
+*Status: reflects the implemented codebase (2026-11-20, Milestone 8).*
 
 ## 1. Overview
 
@@ -12,7 +12,9 @@ MediFlow is a patient-management platform built as a set of independently deploy
 - **Spring Cloud Gateway** (`api-gateway`, port 8080) routes `/api/v1/**` paths to the backing services and applies global CORS.
 - **Backend microservices** under `backend/`, all depending on `common-library` (except `api-gateway`, which uses only Spring Cloud Gateway + springdoc).
 - **Apache Kafka** for asynchronous domain events published by appointment, medical-record, and billing services.
+- **Redis 7** as the shared access-token revocation registry (every service checks the same keys, AOF persistence).
 - **PostgreSQL 16** via Flyway migrations (`ddl-auto: validate`).
+- **Frontend demo mode** (local only): `vite --mode demo` answers `/api/v1/**` in the browser from a synthetic double shared with the Playwright suite. It is a build-time flag, refused in production builds and absent from `dist`.
 
 ## 3. Maven Reactor
 
@@ -50,9 +52,9 @@ Each service follows `controller → service → repository → entity`, plus `d
 
 ## 7. Runtime Configuration
 
-- Required env vars: `JWT_SECRET`, `DB_PASSWORD`. Optional: `DB_URL`, `KAFKA_BOOTSTRAP_SERVERS`, `EUREKA_URL`, `CORS_ALLOWED_ORIGINS`, `DOCTOR_SERVICE_URL`, `CLINIC_TIME_ZONE`, JWT expirations, per-service URLs.
+- Required env vars: `JWT_SECRET`, `DB_PASSWORD`. Optional: `DB_URL`, `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_HOST`/`REDIS_PORT`, `EUREKA_URL`, `CORS_ALLOWED_ORIGINS`, `DOCTOR_SERVICE_URL`, `CLINIC_TIME_ZONE`, JWT expirations, per-service URLs.
 - Default per-service DBs (`patient_db`, `auth_db`, ...) are overridden by `.env` `DB_URL`. The checked-in `.env` does **not** set `DB_URL`, so services run against per-service DBs by default; set `DB_URL` to point all services at a single shared `mediflow` database if desired.
-- Each of the 9 runnable services has a `Dockerfile` + `.dockerignore` (Temurin 21 JRE). Maven produces a plain jar (used by reactor consumers) plus an executable `<service>-1.0.0-exec.jar` via the Spring Boot `repackage` goal with an `exec` classifier; images copy the `-exec` jar. GitHub Actions (`.github/workflows/ci.yml`) verifies backend tests, frontend build, and all 9 images.
+- Each of the 9 runnable services has a `Dockerfile` + `.dockerignore` (Temurin 21 JRE). Maven produces a plain jar (used by reactor consumers) plus an executable `<service>-1.0.0-exec.jar` via the Spring Boot `repackage` goal with an `exec` classifier; images copy the `-exec` jar. GitHub Actions (`.github/workflows/ci.yml`) verifies backend tests, frontend build, Playwright, release checks, and all 9 images.
 
 ## 8. Reliability and Observability
 
@@ -73,4 +75,11 @@ Each service follows `controller → service → repository → entity`, plus `d
 - Appointment and medical-record history tables are append-only and are not backfilled for rows written before M6. Medical-record history stores changed field names only, not previous clinical values.
 - Multiple medical records may exist for one appointment (different record types); no uniqueness constraint is applied there. Invoice-per-appointment **is** constrained (partial unique index).
 - No service registry, config server, rate limiting, distributed tracing or metrics/tracing stack implemented; outbox `PUBLISHED` rows are not archived automatically.
-- The frontend Dockerfile runs the Vite dev server, not a production static build.
+- The frontend `Dockerfile` runs the Vite dev server, not a production static build; the production Compose overlay serves `frontend/mediflow-ui/dist` from nginx instead.
+
+## 10. Deployment and developer experience (M8)
+
+- **Selected-service development.** `scripts/run-service.ps1` loads `.env`, validates required secrets, starts PostgreSQL/Redis/Kafka, and runs one service with its reactor dependencies. The demo (`scripts/start-demo.ps1`) needs no backend. See `docs/development-workflows.md`.
+- **Production overlay.** `docker-compose.prod.yml` overlays the shipped Compose file for a single Linux VM: infrastructure ports are removed (`!override []`), the nine services are `expose`-only with health checks/memory limits/bounded logs, and a `web` nginx container is the only published entry point (80/443). It serves the built SPA and proxies `/api/` to the gateway; Actuator, Swagger and `/internal/**` are not routed. Secrets come from an external `.env.prod`; `SPRING_PROFILES_ACTIVE` is pinned empty. See `docs/production-deployment.md`.
+- **Revocation durability.** Redis runs with AOF (`everysec`) on a named volume, so revocation markers survive restarts. If the volume is lost, previously revoked tokens remain valid until expiry (default 15 minutes); rotating `JWT_SECRET` invalidates all tokens immediately. `SECURITY_REVOCATION_FAIL_OPEN=false` keeps checks fail-closed.
+- **Verification.** 43 Playwright tests (38 mocked-API + 5 demo), cross-service E2E (`core`/`full`), 31 static release checks, the production-config smoke test, and CI validation of the production Compose overlay. See `docs/testing.md`.

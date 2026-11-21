@@ -18,48 +18,62 @@ import { BillingPage } from './pages/BillingPage';
 import { InvoiceDetailPage } from './pages/InvoiceDetailPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
+import { lazy, Suspense } from 'react';
+
+/** Loaded only in demo builds, so the synthetic API stays out of the production bundle. */
+const demoBuild = import.meta.env.VITE_DEMO_MODE === 'true';
+const DemoBanner = demoBuild
+  ? lazy(async () => ({ default: (await import('./demo/DemoBanner')).DemoBanner }))
+  : null;
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-      <Route path="/reset-password" element={<ResetPasswordPage />} />
-      <Route
-        element={
-          <ProtectedRoute>
-            <AppShell />
-          </ProtectedRoute>
-        }
-      >
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/patients" element={<PatientsPage />} />
-        <Route path="/patients/:patientId" element={<PatientDetailPage />} />
-        <Route path="/doctors" element={<DoctorsPage />} />
-        <Route path="/doctors/:doctorId" element={<DoctorDetailPage />} />
-        <Route path="/appointments" element={<AppointmentsPage />} />
-        <Route
-          path="/medical-records"
-          element={
-            <RoleRoute roles={['ADMIN', 'DOCTOR', 'PATIENT']}>
-              <MedicalRecordsPage />
-            </RoleRoute>
-          }
-        />
-        <Route path="/billing" element={<BillingPage />} />
-        <Route path="/billing/:invoiceId" element={<InvoiceDetailPage />} />
-        <Route path="/account/password" element={<ChangePasswordPage />} />
-        <Route path="/notifications" element={<NotificationsPage />} />
-        <Route
-          path="/analytics"
-          element={
-            <RoleRoute roles={['ADMIN', 'DOCTOR']}>
-              <AnalyticsPage />
-            </RoleRoute>
-          }
-        />
-        <Route path="*" element={<NotFound />} />
-      </Route>
-    </Routes>
+    <div className="app-root">
+      {DemoBanner ? (
+        <Suspense fallback={null}>
+          <DemoBanner />
+        </Suspense>
+      ) : null}
+      <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route
+            element={
+              <ProtectedRoute>
+                <AppShell />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/patients" element={<PatientsPage />} />
+            <Route path="/patients/:patientId" element={<PatientDetailPage />} />
+            <Route path="/doctors" element={<DoctorsPage />} />
+            <Route path="/doctors/:doctorId" element={<DoctorDetailPage />} />
+            <Route path="/appointments" element={<AppointmentsPage />} />
+            <Route
+              path="/medical-records"
+              element={
+                <RoleRoute roles={['ADMIN', 'DOCTOR', 'PATIENT']}>
+                  <MedicalRecordsPage />
+                </RoleRoute>
+              }
+            />
+            <Route path="/billing" element={<BillingPage />} />
+            <Route path="/billing/:invoiceId" element={<InvoiceDetailPage />} />
+            <Route path="/account/password" element={<ChangePasswordPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            <Route
+              path="/analytics"
+              element={
+                <RoleRoute roles={['ADMIN', 'DOCTOR']}>
+                  <AnalyticsPage />
+                </RoleRoute>
+              }
+            />
+            <Route path="*" element={<NotFound />} />
+          </Route>
+        </Routes>
+    </div>
   );
 }

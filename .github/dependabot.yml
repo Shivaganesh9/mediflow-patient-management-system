@@ -1,0 +1,75 @@
+# Dependabot configuration for the MediFlow platform.
+#
+# Policy:
+#   * minor + patch updates are grouped into a single PR per ecosystem so they
+#     stay reviewable and CI runs once per ecosystem per week;
+#   * major updates are deliberately NOT grouped (and NOT ignored) so each one
+#     arrives as its own PR and must be reviewed/validated manually before merge;
+#   * GitHub Actions are pinned by major tag in `.github/workflows/ci.yml`, so a
+#     grouped weekly bump keeps them current.
+version: 2
+updates:
+  # ---------------------------------------------------------------- workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+      - ci
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # ------------------------------------------------------------------- npm
+  - package-ecosystem: npm
+    directory: /frontend/mediflow-ui
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:15"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+    labels:
+      - dependencies
+      - frontend
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # ------------------------------------------------------------------ maven
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:30"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+    labels:
+      - dependencies
+      - backend
+    groups:
+      maven-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

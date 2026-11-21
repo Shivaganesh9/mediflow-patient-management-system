@@ -1,10 +1,10 @@
 # MediFlow Project Roadmap
 
-*Status: reflects the implemented codebase (2026-11-17).*
+*Status: reflects the implemented codebase (2026-11-20, Milestone 8).*
 
 ## Status Summary
 
-Implemented and green: auth, patient, doctor, appointment, medical-record, billing, notification, analytics, gateway, and common-library build via the root Maven reactor. Kafka producers exist for appointment/medical-record/billing; consumers are notification-service (appointment + billing topics, retry/DLQ, idempotent) and analytics-service (appointment + billing + medical-record topics, retry/DLQ, idempotent, read-model fact tables). Frontend is fully integrated (API client with JWT refresh, role-based routing, 12 pages wired to `/api/v1/**`). Lab and pharmacy services are intentionally excluded scaffolds.
+Implemented and green: auth, patient, doctor, appointment, medical-record, billing, notification, analytics, gateway, and common-library build via the root Maven reactor. Kafka producers exist for appointment/medical-record/billing; consumers are notification-service (appointment + billing topics, retry/DLQ, idempotent) and analytics-service (appointment + billing + medical-record topics, retry/DLQ, idempotent, read-model fact tables). The frontend is fully integrated (API client with JWT refresh, role-based routing, 12 pages wired to `/api/v1/**`) and also ships a local-only synthetic demo mode. Automated verification spans Maven/Testcontainers, 43 Playwright tests, cross-service E2E and release validation, and a single-VM production Compose deployment is documented. Lab and pharmacy services are intentionally excluded scaffolds.
 
 ## Completed (see `docs/features.md` for detail)
 
@@ -72,13 +72,66 @@ Implemented and green: auth, patient, doctor, appointment, medical-record, billi
    and operational guidance for schedule dependency failures, transition conflicts and audit-table
    reconciliation.
 
+## Milestone 7 — Automated verification and release readiness (completed)
+
+1. **Browser automation.** Playwright 1.65 + TypeScript against the real React app on
+   `127.0.0.1:3100` with a same-origin mocked API (`e2e/fixtures/mock-api.ts`; seeded IDs match
+   `DevSeedData`). 38 tests cover auth/session/revocation, patient booking/reschedule/billing, doctor
+   lifecycle/availability/leave, admin/staff, and loading/empty/422/500/idempotency states.
+2. **Cross-service E2E.** Dependency-free Node runner (`testing/e2e`) starts throwaway PostgreSQL 16,
+   Redis 7 and Kafka 4.0 on 54321/56379/59092, runs services from their `-exec` jars on 1808x with the
+   `seed` profile, and drives 8 journeys (auth, booking, clinical/RBAC, internal endpoint rejection,
+   invoice/idempotency, Kafka fan-out, shared revocation, readiness). Profiles `core` (7 services,
+   fan-out skipped) and `full` (9); `--build`/`--keep`.
+3. **Release validation.** `testing/release/check-release-readiness.mjs` static checks (now 31 after
+   M8) and `smoke.mjs`, which boots the Compose stack plus all services **without a Spring profile**
+   and asserts health, absence of seed accounts, anonymous 401, internal surface, register→login→me→
+   patient-profile, duplicate-registration rejection, restart recovery and (on Linux) graceful
+   shutdown. Isolated ports 54322/63792/59092 and 17080–17091.
+4. **Internal schedule credential.** The non-gateway `/internal/doctors/{doctorId}/schedule/validation`
+   now requires a 30-second service JWT minted by appointment-service (`iss=appointment-service`,
+   `aud=doctor-service`, `type=service`, `scope=doctor-schedule:validate`) signed with a key derived
+   from `JWT_SECRET`. User tokens get 403; missing/malformed/wrong-audience get 401.
+5. **Security regression fix.** Every `SecurityConfig` permits the `ERROR` dispatcher so a denied
+   request keeps its 403 instead of degrading to an empty-bodied 401 (`ErrorDispatchSecurityTest`).
+6. **CI.** Fast PR jobs (`backend`, `frontend`, `browser-e2e`, `release-checks`, `docker-images`);
+   `cross-service-e2e` and `release-smoke` on `main` pushes and `workflow_dispatch`, with failure
+   artifacts.
+
+## Milestone 8 — Documentation, demo mode and deployment readiness (completed)
+
+1. **Documentation audit and consolidation.** Repository-wide audit; new authoritative
+   `docs/getting-started.md` (Windows-first), `docs/development-workflows.md` (low-resource),
+   `docs/demo-mode.md`, `docs/production-deployment.md`; rewritten `docs/testing.md` and root
+   `README.md`; `AGENTS.md` and service/frontend/E2E READMEs aligned with the code. Historical/snapshot
+   documents carry status banners instead of being silently rewritten.
+2. **Frontend-only demo mode.** The Playwright API double was made transport-neutral
+   (`src/demo/mock-api.ts`, `dispatch()`), with a demo installer that intercepts `fetch`, a demo banner
+   (role sign-in, reset, replay notice), seeded patient/doctor/admin data, schedule validation,
+   lifecycle/history, 250 ms latency and a payment timeout→replay demonstration. `vite --mode demo` +
+   `.env.demo`; a production build with the flag is refused and `dist` contains no demo chunk. Five
+   Playwright demo tests run in their own project/port.
+3. **Low-resource developer workflows.** `scripts/run-service.ps1` (selected service, `.env` loading,
+   infra start, `-Profiles`), `start-demo.ps1`, `stop-infra.ps1`, `test-light.ps1`; documented
+   infra-only, selected-service and full-stack paths with memory guidance.
+4. **Single-VM production deployment.** `docker-compose.prod.yml` (private infrastructure/services,
+   nginx edge publishing only 80/443, health checks, memory limits, bounded JSON logs, restart
+   policies, graceful shutdown), `.env.prod.example` (external secrets, no dev/seed profile),
+   `deploy/nginx/{default.conf,https.conf.example}`, Redis AOF + `noeviction`, documented HTTPS,
+   backup/restore, update/rollback, sizing and the residual Redis revocation gap (15-minute token
+   exposure after volume loss; rotate `JWT_SECRET`).
+5. **Verification.** Release-readiness checker extended from 23 to 31 checks (prod overlay exposure,
+   secrets/profile isolation, Redis durability, nginx surface, demo isolation, PowerShell scripts, CI
+   prod-Compose validation). CI validates the production overlay. Frontend build, typecheck, 43
+   Playwright tests and all 31 static checks pass locally.
+
 ## In Progress / Next
 
 1. **Consume more Kafka events** — optionally medical-record.updated.v1 → analytics; medical-record topics → notifications.
 2. **Cross-service identity validation** — resolve the admin-created patient/doctor profile limitation (see `docs/security.md`).
-3. **Observability & hardening** — rate limiting, distributed tracing (Zipkin/OpenTelemetry), Prometheus/Grafana server + dashboards, HTTPS, secrets management. Health/readiness probes, correlation logging and metrics exposure are delivered (Completed item 8).
-4. **Production deployment** — Kubernetes/Terraform, backups automation, image registry/CD pipeline. (Service images, CI verification and compose hardening are delivered; see Completed items 6 and 8.)
-5. **Known data-layer gaps** — outbox row archival (payment idempotency and the appointment exclusion constraint are delivered in Milestone 5).
+3. **Observability & hardening** — rate limiting, distributed tracing (Zipkin/OpenTelemetry), Prometheus/Grafana server + dashboards, centralized logging. Health/readiness probes, correlation logging and metrics exposure are delivered (M4).
+4. **Production hardening** — image registry/CD, HA/zero-downtime deployment, automated backups and DR, automated certificate renewal. The single-VM Compose deployment, HTTPS configuration and manual backup/restore are delivered in M8.
+5. **Known data-layer gaps** — outbox row archival (payment idempotency and the appointment exclusion constraint are delivered in M5).
 
 ## Future (deferred)
 

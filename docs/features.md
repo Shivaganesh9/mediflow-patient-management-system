@@ -1,6 +1,6 @@
 # MediFlow Implemented Features
 
-*Status: reflects the implemented codebase (2026-11-17, Milestone 6). This is a feature inventory of what is actually delivered, not a roadmap.*
+*Status: reflects the implemented codebase (2026-11-20, Milestone 8). This is a feature inventory of what is actually delivered, not a roadmap.*
 
 ## Backend (implemented)
 
@@ -75,15 +75,24 @@
 - Payment retries reuse one `Idempotency-Key` per payment intent (a field change starts a new intent), and appointment conflicts show an actionable "choose a different time slot" message from the 409 response.
 - Base URL `VITE_API_BASE_URL ?? http://localhost:8080`; dev server port 3000.
 
+### Frontend demo mode
+- `npm run demo` (`vite --mode demo`, `.env.demo`) serves the real SPA with an in-browser synthetic API; no backend, database or Kafka.
+- Reuses the Playwright API double (`src/demo/mock-api.ts`); the Playwright fixture is a thin adapter, so the demo and browser tests share one contract.
+- Demo banner: labels simulated data, one-click Patient/Doctor/Admin sign-in through the normal auth flow, current user, **Reset demo data** (clears localStorage + reloads), and a payment-replay notice.
+- Models role dashboards, appointments/availability/leave, records/history, invoices/payment idempotency (first payment times out, retry replays), notifications and analytics; 250 ms latency makes loading states visible.
+- `vite.config.ts` refuses a production build with `VITE_DEMO_MODE=true`; the demo code is lazy-loaded so a normal production `dist` contains no demo chunk or strings.
+
 ## Delivery & CI
 - Docker images for all 9 runnable services (Temurin 21 JRE, `mediflow/<service>`); Spring Boot `repackage` with an `exec` classifier produces executable `<service>-1.0.0-exec.jar` while the plain jar stays usable as a reactor dependency.
-- GitHub Actions (`.github/workflows/ci.yml`): backend `mvn -B -ntp verify`, frontend `npm ci` + `npm run build`, and a 9-service matrix that packages and docker-builds each image.
-- `docker-compose.yml` remains infrastructure-only (PostgreSQL + Kafka).
+- GitHub Actions (`.github/workflows/ci.yml`): backend `mvn -B -ntp -U clean verify` on JDK 21, frontend `npm ci` + `typecheck:e2e` + `npm run build` on Node 24 LTS, 43 Playwright tests (38 mocked-API + 5 demo), 31 static release checks, Compose validation (dev, E2E, production overlay), and a 9-service matrix that packages and docker-builds each image. Workflow-level read-only `permissions`; actions pinned to `checkout@v7`/`setup-java@v6`/`setup-node@v7`/`upload-artifact@v7`; Dependabot updates Actions, npm and Maven. Heavy cross-service E2E and release smoke run on `main`/manual.
+- `docker-compose.yml` runs PostgreSQL 16 + Redis 7 + Kafka 4.0. `docker-compose.prod.yml` is a single-VM production overlay: private infrastructure and services, one nginx edge publishing 80/443.
+- Developer scripts: `scripts/run-service.ps1` (selected service), `start-demo.ps1`, `stop-infra.ps1`, `test-light.ps1`. See `docs/development-workflows.md`, `docs/demo-mode.md`, `docs/production-deployment.md`.
 
 ## Not yet implemented (intentional scope)
 - No consumer for `medical-record.updated.v1` (analytics consumes the created topic only).
 - No leave approval workflow: leaves are treated as approved when created.
 - Lab and pharmacy services (scaffolds only).
 - Service registry/config server, rate limiting, tracing, observability stack.
-- Kubernetes/Terraform, image registry/CD deployment, backups/DR.
+- Kubernetes/Terraform, image registry/CD pipeline, high availability (the single-VM Compose deployment is documented but is a single point of failure).
+- Automated backups/DR orchestration (manual PostgreSQL backup/restore is documented), centralized logging.
 - FHIR/HL7 interoperability, insurance claims.

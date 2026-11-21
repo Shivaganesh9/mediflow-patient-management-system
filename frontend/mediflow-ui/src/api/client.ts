@@ -1,6 +1,8 @@
 import { ApiEnvelope, ApiError } from '../types/common';
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080';
+const BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ??
+  (import.meta.env.VITE_DEMO_MODE === 'true' ? window.location.origin : 'http://localhost:8080');
 
 const ACCESS_TOKEN_KEY = 'mediflow.accessToken';
 const REFRESH_TOKEN_KEY = 'mediflow.refreshToken';

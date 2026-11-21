@@ -879,10 +879,11 @@ Pre-V7 appointments have no `CREATED` history row; that is expected and not back
 Full details and the requirement → suite map are in `docs/testing.md`. Quick reference:
 
 ```powershell
-# Browser workflows (mocked API, real React app) - 5 specs, 38 tests
+# Browser workflows (mocked API, real React app) - 6 specs, 43 tests (38 mocked-API + 5 demo)
 cd frontend/mediflow-ui
 npm run typecheck:e2e
 npm run test:e2e
+npm run test:e2e:demo      # demo project only (vite --mode demo, port 3101)
 
 # Cross-service E2E (throwaway PostgreSQL 16 + Redis 7 + Kafka 4.0 on 54321/56379/59092)
 node testing/e2e/run-e2e.mjs --profile=core --build    # 7 journeys, Kafka journey skipped
@@ -941,3 +942,66 @@ Fix: every service's `SecurityConfig` starts its `authorizeHttpRequests` block w
 (doctor-service) pins both halves: error dispatches are permitted, ordinary requests still require
 authentication. If a future service is added, copy that rule — otherwise its filter-chain denials
 degrade to 401 again.
+
+## 18. Developer and production workflows (M8)
+
+### 18.1 Low-resource local workflows
+
+```powershell
+# Frontend-only demo (no Java, no Docker)
+.\scripts\start-demo.ps1
+
+# One service + infrastructure; -Profiles dev,seed loads deterministic demo accounts
+.\scripts\run-service.ps1 -Service appointment-service -Profiles dev,seed
+.\scripts\run-service.ps1 -Service api-gateway -SkipInfra
+
+# Lightweight gate: build, typecheck, 43 Playwright tests, 31 static checks
+.\scripts\test-light.ps1
+
+# Stop infrastructure (volumes kept) or wipe local data
+.\scripts\stop-infra.ps1
+.\scripts\stop-infra.ps1 -RemoveVolumes
+```
+
+The demo (`vite --mode demo`, `.env.demo`) is refused in production builds and absent from `dist`.
+See `docs/getting-started.md`, `docs/development-workflows.md`, `docs/demo-mode.md`.
+
+### 18.2 Production Compose (single Linux VM)
+
+```bash
+# Validate the merged configuration
+docker compose --env-file .env.prod \
+  -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+
+# Start / inspect / stop
+docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml ps
+docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml down
+```
+
+Only the `web` nginx edge publishes 80/443. PostgreSQL, Redis, Kafka and the nine services are
+private. The overlay pins `SPRING_PROFILES_ACTIVE: ""`; a production start must never contain seed
+accounts. Full deployment, HTTPS, backup/restore, update/rollback and sizing:
+`docs/production-deployment.md`.
+
+### 18.3 Revocation store loss
+
+Redis runs with AOF (`everysec`) on `redis-data`, so revocation markers survive restarts. If the
+volume is lost, markers are gone and previously revoked access tokens stay valid until they expire
+(default `JWT_EXPIRATION=900000`, 15 minutes). Immediate mitigation:
+
+1. Rotate `JWT_SECRET` in `.env.prod` and recreate the services (all issued tokens become invalid).
+2. Confirm `SECURITY_REVOCATION_FAIL_OPEN=false` (fail closed while Redis is down).
+3. Recreate `redis-data` (empty) and let the stack repopulate markers on the next logins.
+
+### 18.4 Release and deployment verification
+
+```bash
+node testing/release/check-release-readiness.mjs          # 31 static checks
+node testing/release/smoke.mjs --build                    # production config, no Spring profile
+```
+
+CI validates the production overlay with a temporary `.env.prod` (`release-checks`). Keep the
+pre-upgrade PostgreSQL dump until the new release is accepted; rollback = previous image tag +
+restore the dump if a destructive migration ran. See `docs/testing.md` and
+`docs/production-deployment.md` §12.

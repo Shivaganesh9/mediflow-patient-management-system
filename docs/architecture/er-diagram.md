@@ -1,5 +1,10 @@
 ﻿# ER Diagram
 
+> **Snapshot notice.** This file is retained for historical context and predates the current
+> implementation in places. For code-verified documentation use [../database-design.md](../database-design.md) and
+> the primary docs linked from [../architecture.md](../architecture.md).
+
+
 *Status: reflects the implemented codebase (2026-08-14).*
 
 ## Core Entities (by service)

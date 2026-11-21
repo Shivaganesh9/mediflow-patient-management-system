@@ -1,0 +1,83 @@
+# HTTPS edge for MediFlow (single VM).
+#
+# Use this file instead of default.conf AFTER certificates exist in deploy/certs:
+#   fullchain.pem  privkey.pem
+#
+# 1. Issue the first certificate with the HTTP-01 challenge (port 80 must be open):
+#      mkdir -p deploy/certbot/www
+#      docker run --rm -v "$PWD/deploy/certbot/www:/var/www/certbot" \
+#        -v "$PWD/deploy/certs:/etc/letsencrypt" \
+#        certbot/certbot certonly --webroot -w /var/www/certbot \
+#        -d mediflow.example.com --email ops@example.com --agree-tos --no-eff-email
+#    then copy/symlink the files into deploy/certs (see docs/production-deployment.md).
+# 2. Replace deploy/nginx/default.conf with this file (adjusted domain/cert paths).
+# 3. docker compose ... up -d web
+# 4. Renew with the same certbot command plus --force-renewal (cron/systemd timer).
+
+server {
+    listen 80 default_server;
+    server_name mediflow.example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl default_server;
+    http2 on;
+    server_name mediflow.example.com;
+
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 2m;
+    server_tokens off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location /api/ {
+        proxy_pass http://api-gateway:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+        proxy_buffering off;
+    }
+
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~ ^/(actuator|v3/api-docs|swagger-ui|internal)(/|$) {
+        return 404;
+    }
+}

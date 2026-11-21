@@ -1,6 +1,6 @@
 # MediFlow Microservices
 
-*Status: reflects the implemented codebase (2026-11-17, Milestone 6).*
+*Status: reflects the implemented codebase (2026-11-20, Milestone 8).*
 
 ## Service Catalog (implemented)
 
@@ -25,7 +25,19 @@
 
 Each service owns its domain model, its database tables (Flyway migrations), and its JWT validation. Cross-service references are by Auth-user/business UUIDs (no shared tables, no FK joins across services). Synchronous REST via the gateway; asynchronous events via Kafka producers.
 
-Reliability posture (all services): health + liveness/readiness probes, end-to-end `X-Correlation-ID`, graceful shutdown, Hikari pool bounds and `open-in-view: false`; the eight common-library services also expose authenticated Prometheus metrics (the gateway has no edge security, so it exposes health/info only). The three event producers (appointment/billing/medical-record) write through a transactional outbox and a scheduled relay (at-least-once, bounded retry, `DEAD` state); notification/analytics consumers use `ErrorHandlingDeserializer`, per-record ack, bounded exponential retry and a `dlq.<topic>` dead-letter topic. See `docs/kafka-events.md` and `docs/runbook.md` §15–16.
+Reliability posture (all services): health + liveness/readiness probes, end-to-end `X-Correlation-ID`, graceful shutdown, Hikari pool bounds and `open-in-view: false`; the eight common-library services also expose authenticated Prometheus metrics (the gateway has no edge security, so it exposes health/info only). The three event producers (appointment/billing/medical-record) write through a transactional outbox and a scheduled relay (at-least-once, bounded retry, `DEAD` state); notification/analytics consumers use `ErrorHandlingDeserializer`, per-record ack, bounded exponential retry and a `dlq.<topic>` dead-letter topic. Redis holds shared access-token revocation markers with AOF persistence. See `docs/kafka-events.md` and `docs/runbook.md` §15–16.
+
+## Deployment shapes
+
+| Shape | Entry point | Use |
+|---|---|---|
+| Local development | Vite `:3000` → gateway `:8080`; services reached directly by port for internal calls | `docs/getting-started.md`, `docs/development-workflows.md` |
+| Frontend demo | Vite `:3000`, no backend | `docs/demo-mode.md` |
+| Single-VM production | nginx `:80/:443` → gateway `:8080`; all other containers private | `docs/production-deployment.md` |
+
+Only the gateway is a browser entry point. The doctor schedule validation endpoint
+(`/internal/doctors/{doctorId}/schedule/validation`) is not gateway-routed and requires a
+short-lived service credential derived from `JWT_SECRET`.
 
 ## Internal Dependencies
 

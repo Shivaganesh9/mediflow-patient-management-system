@@ -3,11 +3,16 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "vite",
+    "demo": "vite --mode demo",
     "build": "tsc -b && vite build",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
+    "test:e2e:demo": "playwright test --project=demo",
     "test:e2e:report": "playwright show-report e2e/report",
     "test:e2e:install": "playwright install chromium",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json"

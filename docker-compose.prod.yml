@@ -1,0 +1,286 @@
+# ============================================================================
+# MediFlow production overlay — single Linux VM, Docker Compose.
+#
+# Always use it together with the base compose file and an external env file:
+#
+#   docker compose --env-file .env.prod \
+#     -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this overlay changes relative to the development stack:
+#   * PostgreSQL, Redis and Kafka publish NO host ports — only the web edge does.
+#   * Application services publish no ports either; they are reachable only on the
+#     compose network (gateway <- nginx, services <- gateway).
+#   * A `web` nginx container serves the built SPA and proxies `/api/` to the gateway.
+#   * Kafka advertises its in-network name so producers/consumers inside containers work.
+#   * Every long-running container restarts unless stopped, has a health check, bounded
+#     JSON logs and a memory limit sized for an 8 GB VM.
+#
+# Secrets live in .env.prod on the server (chmod 600) and are injected with env_file;
+# nothing here contains a usable credential. See docs/production-deployment.md.
+# ============================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-service-common: &service-common
+  restart: unless-stopped
+  stop_grace_period: 45s
+  env_file:
+    - .env.prod
+  environment: &service-environment
+    # No Spring profile: dev/seed data and debug logging must never be active here.
+    SPRING_PROFILES_ACTIVE: ""
+    DB_USERNAME: ${POSTGRES_USER:?Set POSTGRES_USER in .env.prod}
+    DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
+    JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env.prod}
+    REDIS_HOST: redis
+    REDIS_PORT: "6379"
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    # Token revocation must fail closed if Redis cannot answer.
+    SECURITY_REVOCATION_ENABLED: "true"
+    SECURITY_REVOCATION_FAIL_OPEN: "false"
+    HEALTH_SHOW_DETAILS: "never"
+    JPA_SHOW_SQL: "false"
+    EUREKA_CLIENT_ENABLED: "false"
+    EUREKA_CLIENT_REGISTER_WITH_EUREKA: "false"
+    EUREKA_CLIENT_FETCH_REGISTRY: "false"
+    CLINIC_TIME_ZONE: ${CLINIC_TIME_ZONE:-Asia/Kolkata}
+    CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://localhost}
+  logging: *default-logging
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  # ---------------------------------------------------------------- infrastructure
+  postgres:
+    ports: !override []
+    mem_limit: 1g
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env.prod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  kafka:
+    ports: !override []
+    mem_limit: 1g
+    logging: *default-logging
+    environment:
+      # Containers must resolve the broker by service name, not localhost.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx640m"
+
+  redis:
+    ports: !override []
+    mem_limit: 320m
+    logging: *default-logging
+    # AOF + a named volume keep access-token revocation markers across restarts.
+    # noeviction guarantees a full memory never silently drops revocation keys.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
+
+  # ---------------------------------------------------------------- application services
+  auth-service:
+    <<: *service-common
+    image: mediflow/auth-service:${MEDIFLOW_IMAGE_TAG:-1.0.0}
+    mem_limit: 640m
+    expose: ["8081"]
+    environment:
+      <<: *service-environment
+      DB_URL: jdbc:postgresql://postgres:5432/mediflow_auth_db
+      AUTH_PASSWORD_RESET_EXPOSE_TOKEN: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8081/actuator/health/readiness | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  patient-service:
+    <<: *service-common
+    image: mediflow/patient-service:${MEDIFLOW_IMAGE_TAG:-1.0.0}
+    mem_limit: 640m
+    expose: ["8083"]
+    environment:
+      <<: *service-environment
+      DB_URL: jdbc:postgresql://postgres:5432/patient_db
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8083/actuator/health/readiness | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  appointment-service:
+    <<: *service-common
+    image: mediflow/appointment-service:${MEDIFLOW_IMAGE_TAG:-1.0.0}
+    mem_limit: 768m
+    expose: ["8084"]
+    environment:
+      <<: *service-environment
+      DB_URL: jdbc:postgresql://postgres:5432/appointment_db
+      DOCTOR_SERVICE_URL: http://doctor-service:8085
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8084/actuator/health/readiness | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  doctor-service:
+    <<: *service-common
+    image: mediflow/doctor-service:${MEDIFLOW_IMAGE_TAG:-1.0.0}
+    mem_limit: 640m
+    expose: ["8085"]
+    environment:
+      <<: *service-environment
+      DB_URL: jdbc:postgresql://postgres:5432/doctor_db
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8085/actuator/health/readiness | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  billing-service:
+    <<: *service-common
+    image: mediflow/billing-service:${MEDIFLOW_IMAGE_TAG:-1.0.0}
+    mem_limit: 768m
+    expose: ["8087"]
+    environment:
+      <<: *service-environment
+      DB_URL: jdbc:postgresql://postgres:5432/billing_db
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8087/actuator/health/readiness | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  analytics-service:
+    <<: *service-common
+    image: mediflow/analytics-service:${MEDIFLOW_IMAGE_TAG:-1.0.0}
+    mem_limit: 640m
+    expose: ["8088"]
+    environment:
+      <<: *service-environment
+      DB_URL: jdbc:postgresql://postgres:5432/analytics_db
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8088/actuator/health/readiness | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  notification-service:
+    <<: *service-common
+    image: mediflow/notification-service:${MEDIFLOW_IMAGE_TAG:-1.0.0}
+    mem_limit: 640m
+    expose: ["8089"]
+    environment:
+      <<: *service-environment
+      DB_URL: jdbc:postgresql://postgres:5432/notification_db
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8089/actuator/health/readiness | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  medical-record-service:
+    <<: *service-common
+    image: mediflow/medical-record-service:${MEDIFLOW_IMAGE_TAG:-1.0.0}
+    mem_limit: 768m
+    expose: ["8091"]
+    environment:
+      <<: *service-environment
+      DB_URL: jdbc:postgresql://postgres:5432/medical_record_db
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8091/actuator/health/readiness | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+
+  api-gateway:
+    <<: *service-common
+    image: mediflow/api-gateway:${MEDIFLOW_IMAGE_TAG:-1.0.0}
+    mem_limit: 512m
+    expose: ["8080"]
+    environment:
+      <<: *service-environment
+      AUTH_SERVICE_URL: http://auth-service:8081
+      PATIENT_SERVICE_URL: http://patient-service:8083
+      APPOINTMENT_SERVICE_URL: http://appointment-service:8084
+      DOCTOR_SERVICE_URL: http://doctor-service:8085
+      BILLING_SERVICE_URL: http://billing-service:8087
+      ANALYTICS_SERVICE_URL: http://analytics-service:8088
+      NOTIFICATION_SERVICE_URL: http://notification-service:8089
+      MEDICAL_RECORD_SERVICE_URL: http://medical-record-service:8091
+      GATEWAY_SELF_URL: http://api-gateway:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      patient-service:
+        condition: service_started
+      appointment-service:
+        condition: service_started
+      doctor-service:
+        condition: service_started
+      billing-service:
+        condition: service_started
+      analytics-service:
+        condition: service_started
+      notification-service:
+        condition: service_started
+      medical-record-service:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/actuator/health/readiness | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # ---------------------------------------------------------------- public edge
+  # The only container that publishes ports. It serves the production SPA build and
+  # forwards `/api/` to the gateway; nothing else is reachable from outside the VM.
+  web:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${WEB_HTTP_PORT:-80}:80"
+      - "${WEB_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/mediflow-ui/dist:/usr/share/nginx/html:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+      - ./deploy/certbot/www:/var/www/certbot:ro
+    depends_on:
+      api-gateway:
+        condition: service_started
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

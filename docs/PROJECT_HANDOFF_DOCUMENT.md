@@ -560,5 +560,46 @@ Continue building the MediFlow Patient Management System from the current scaffo
 - **Test counts:** doctor-service 72 (incl. 9 internal-credential + 2 error-dispatch), appointment-service 107, Playwright 38/38, cross-service E2E 8/8 (full).
 - **Not changed:** Java 21 / Spring Boot 3.5 architecture, ports, DB topology, M1–M6 business rules and guarantees, public API shapes, Kafka topics/payloads, Flyway history. All M7 work is uncommitted; nothing was committed or pushed.
 
+### Update (2026-11-20) — Milestone 8: documentation, demo mode, low-resource workflows, production prep
+
+- **Documentation audit.** All Markdown files were reviewed against the code. New authoritative docs:
+  `docs/getting-started.md` (Windows-first setup, env vars, seed data, common errors),
+  `docs/development-workflows.md` (demo / infra-only / selected services / full stack, memory tips),
+  `docs/demo-mode.md` (synthetic frontend mode and guarantees), and `docs/production-deployment.md`
+  (single Linux VM, HTTPS, backups, rollback, Redis gap). `docs/testing.md` and the root `README.md`
+  were rewritten; `AGENTS.md`, service READMEs, frontend README and `testing/e2e/README.md` were
+  corrected (M6/M7/M8 endpoints, lifecycle, migrations, counts).
+- **Frontend-only demo mode.** The Playwright API double was made transport-neutral
+  (`src/demo/mock-api.ts`, `MockRequest`/`Responder`/`dispatch()`); `e2e/fixtures/mock-api.ts` is now a
+  thin adapter. `src/demo/install.ts` intercepts `/api/v1/**` and returns real `Response` objects;
+  `DemoBanner` provides Patient/Doctor/Admin sign-in, reset, and a payment-replay notice. Seeded data:
+  Ada Patient, Dana Doctor (Mon/Wed 09:00–17:00 + leave), Avery Admin, `INV-1001` pending, annual
+  checkup. Behaviour: 250 ms latency, deterministic token acceptance across reload, real working-hours/
+  leave/overlap messages, lifecycle/history, and one payment timeout followed by an idempotent replay.
+  `npm run demo` (`vite --mode demo`, `.env.demo`). `vite.config.ts` refuses production with
+  `VITE_DEMO_MODE=true`; the banner/installer are lazy so a normal `dist` has no demo chunk or strings.
+  Five Playwright demo tests run in a second project on 3101 (total 43 browser/demo tests).
+- **Low-resource workflows.** `scripts/run-service.ps1` (validates the nine runnable services, loads
+  `.env`, requires `JWT_SECRET`/`DB_PASSWORD`, starts infra, supports `-SkipInfra` and `-Profiles
+  dev,seed`), `start-demo.ps1`, `stop-infra.ps1`, `test-light.ps1`. Dependency map and targeted Maven
+  commands are documented; no new Spring profiles were invented (`dev`/`seed` only).
+- **Single-VM production layer.** `docker-compose.prod.yml` (PostgreSQL/Redis/Kafka ports
+  `!override []`, nine services `expose`-only with health checks/mem limits/JSON log rotation, nginx
+  `web` publishing only 80/443), `.env.prod.example`, `deploy/nginx/default.conf` and
+  `https.conf.example`. Only the SPA and `/api/` are proxied; Actuator/Swagger/`/internal/**` are 404.
+  `SPRING_PROFILES_ACTIVE` pinned empty; `SECURITY_REVOCATION_FAIL_OPEN=false`;
+  `AUTH_PASSWORD_RESET_EXPOSE_TOKEN=false`; Redis `--appendonly yes --appendfsync everysec
+  --maxmemory-policy noeviction` on `redis-data`. Documented backup/restore, update/rollback, sizing,
+  and the residual 15-minute token exposure after losing the Redis volume (rotate `JWT_SECRET`).
+- **Verification tooling.** `testing/release/check-release-readiness.mjs` grew from 23 to 31 checks
+  (production overlay ports/secrets/profile, Redis durability, nginx surface, demo isolation,
+  PowerShell scripts, CI prod-Compose validation). CI's `release-checks` job now validates the merged
+  production Compose file. Local results: `tsc -b` and `typecheck:e2e` clean; Playwright 38/38
+  (chromium) + 5/5 (demo); production build has no demo assets; the demo production guard fails as
+  intended; 31/31 release checks; dev and prod `docker compose config` both valid.
+- **Not changed:** Java 21 / Spring Boot 3.5 architecture, ports, service topology, M1–M7 business
+  rules, public API shapes, Kafka topics/payloads and Flyway history. M8 work is uncommitted; nothing
+  was committed or pushed.
+
 ### Accurate references
 For current, code-verified documentation see `docs/architecture.md`, `docs/security.md`, `docs/api-design.md`, `docs/database-design.md`, `docs/kafka-events.md`, `docs/microservices.md`, `docs/features.md`.

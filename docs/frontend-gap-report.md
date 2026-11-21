@@ -1,5 +1,9 @@
 # MediFlow Frontend Verification & Gap Report
 
+> **Historical snapshot (2026-08-18, re-verified 2026-11-12).** It predates Milestones 6–8
+> (workflow parity, demo mode, production edge). Current frontend behaviour is documented in
+> [features.md](features.md) and verified by [testing.md](testing.md).
+
 *Status: verified against the running stack (2026-08-18); role-gate findings resolved and re-verified 2026-11-12. Frontend builds with `tsc -b && vite build` (TS strict).*
 
 ## 1. What was verified (all pass)

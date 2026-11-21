@@ -90,10 +90,12 @@ Migrations recreate the schema; the `seed` profile (`ApplicationRunner`,
 ## 5. Tests
 
 - **H2 in PostgreSQL mode** (`create-drop`, Flyway disabled) for patient / doctor / auth /
-  appointment / billing: fast, no infra needed. Schema is generated from JPA entities.
+  appointment / billing unit and controller tests: fast, no infra needed. Schema is generated from
+  JPA entities.
 - **Testcontainers PostgreSQL 16 + Flyway** for analytics / medical-record / notification
-  integration tests (`disabledWithoutDocker = true` — skipped without Docker). The JVM
-  default timezone is set to UTC for analytics/notification tests (pgjdbc rejects non-UTC
+  integration tests, plus appointment-service slot-exclusion/concurrency and billing-service
+  idempotency/invoice-uniqueness suites (`disabledWithoutDocker = true` — skipped without Docker).
+  The JVM default timezone is set to UTC for analytics/notification tests (pgjdbc rejects non-UTC
   zones on PG16).
 
 Run one service's tests: `mvn -pl backend/patient-service test`.

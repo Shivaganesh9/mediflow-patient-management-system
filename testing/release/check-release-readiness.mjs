@@ -365,6 +365,132 @@ check('CI builds every service image and runs both E2E suites', () => {
   assertContains(ci, 'docker compose', 'ci.yml');
 });
 
+// ---------------------------------------------------------------------------------------------
+// M8: production overlay, demo-mode isolation and developer scripts.
+// ---------------------------------------------------------------------------------------------
+
+/** Extracts one `  <name>:` block from the production overlay (2-space indentation). */
+function yamlServiceBlock(text, name) {
+  const marker = `\n  ${name}:\n`;
+  const start = text.indexOf(marker);
+  if (start === -1) throw new Error(`docker-compose.prod.yml has no ${name} service`);
+  const body = text.slice(start + 1);
+  const end = body.search(/\n {2}[a-z][a-z0-9-]*:\n/);
+  return end === -1 ? body : body.slice(0, end);
+}
+
+check('production overlay publishes only the web edge', () => {
+  const prod = read('docker-compose.prod.yml');
+  for (const service of ['postgres', 'kafka', 'redis']) {
+    assertMatches(
+      yamlServiceBlock(prod, service),
+      /ports:\s*!override\s*\[\]/,
+      `${service} in docker-compose.prod.yml`,
+    );
+  }
+  for (const service of SERVICES) {
+    const block = yamlServiceBlock(prod, service);
+    assertNotMatches(block, /^ {4}ports:\s*$/m, `${service} in docker-compose.prod.yml`);
+    assertContains(block, 'expose:', `${service} in docker-compose.prod.yml`);
+    assertContains(block, 'healthcheck:', `${service} in docker-compose.prod.yml`);
+    assertContains(block, 'mem_limit:', `${service} in docker-compose.prod.yml`);
+    assertContains(block, '<<: *service-common', `${service} in docker-compose.prod.yml`);
+  }
+  assertContains(prod, 'restart: unless-stopped', 'docker-compose.prod.yml');
+  const web = yamlServiceBlock(prod, 'web');
+  assertContains(web, 'nginx:1.27-alpine', 'web service');
+  assertContains(web, 'ports:', 'web service');
+  assertContains(web, 'frontend/mediflow-ui/dist', 'web service');
+  assertContains(web, 'healthcheck:', 'web service');
+});
+
+check('production overlay never enables a dev or seed profile', () => {
+  const prod = read('docker-compose.prod.yml');
+  assertNotMatches(prod, /SPRING_PROFILES_ACTIVE:\s*(dev|seed)/, 'docker-compose.prod.yml');
+  assertContains(prod, 'SPRING_PROFILES_ACTIVE: ""', 'docker-compose.prod.yml');
+  assertNotMatches(prod, /AUTH_PASSWORD_RESET_EXPOSE_TOKEN:\s*"?true/i, 'docker-compose.prod.yml');
+  assertContains(prod, 'SECURITY_REVOCATION_FAIL_OPEN: "false"', 'docker-compose.prod.yml');
+});
+
+check('production env template keeps secrets external', () => {
+  const env = read('.env.prod.example');
+  for (const key of [
+    'MEDIFLOW_IMAGE_TAG',
+    'POSTGRES_USER',
+    'POSTGRES_PASSWORD',
+    'JWT_SECRET',
+    'CORS_ALLOWED_ORIGINS',
+    'CLINIC_TIME_ZONE',
+  ]) {
+    assertMatches(env, new RegExp(`^${key}=`, 'm'), '.env.prod.example');
+  }
+  assertNotMatches(env, /^SPRING_PROFILES_ACTIVE=/m, '.env.prod.example');
+  for (const key of ['JWT_SECRET', 'POSTGRES_PASSWORD']) {
+    const value = env.match(new RegExp(`^${key}=(.*)$`, 'm'))?.[1] ?? '';
+    if (!/replace/i.test(value)) throw new Error(`${key} in .env.prod.example is not an obvious placeholder`);
+  }
+  assertContains(read('.gitignore'), '!.env.prod.example', '.gitignore');
+});
+
+check('Redis revocation state survives restarts (AOF + named volume)', () => {
+  const compose = read('docker-compose.yml');
+  assertContains(compose, '--appendonly', 'docker-compose.yml redis');
+  assertContains(compose, 'redis-data:/data', 'docker-compose.yml redis volume');
+  assertMatches(compose, /^volumes:\r?\n\s+postgres-data:/m, 'docker-compose.yml volumes');
+  const prod = read('docker-compose.prod.yml');
+  assertContains(prod, '--appendonly', 'docker-compose.prod.yml redis');
+  assertContains(prod, 'noeviction', 'docker-compose.prod.yml redis');
+  assertContains(prod, 'redis-data:/data', 'docker-compose.prod.yml redis volume');
+});
+
+check('the production edge proxies only the SPA and /api to the gateway', () => {
+  const nginx = read('deploy/nginx/default.conf');
+  assertContains(nginx, 'proxy_pass http://api-gateway:8080', 'deploy/nginx/default.conf');
+  assertNotMatches(
+    nginx,
+    /proxy_pass\s+http:\/\/(auth|patient|doctor|appointment|billing|analytics|notification|medical-record)-service/,
+    'deploy/nginx/default.conf',
+  );
+  assertContains(nginx, 'location ~ ^/(actuator|v3/api-docs|swagger-ui|internal)', 'deploy/nginx/default.conf');
+  assertContains(nginx, 'try_files $uri $uri/ /index.html', 'deploy/nginx/default.conf');
+  assertContains(nginx, 'client_max_body_size', 'deploy/nginx/default.conf');
+});
+
+check('demo mode cannot activate in a production build', () => {
+  const envDemo = read('frontend/mediflow-ui/.env.demo');
+  assertMatches(envDemo, /^VITE_DEMO_MODE=true$/m, '.env.demo');
+  const vite = read('frontend/mediflow-ui/vite.config.ts');
+  assertContains(vite, "mode === 'production'", 'vite.config.ts');
+  assertContains(vite, 'VITE_DEMO_MODE', 'vite.config.ts');
+  const pkg = JSON.parse(read('frontend/mediflow-ui/package.json'));
+  if (!/vite --mode demo/.test(pkg.scripts?.demo ?? '')) {
+    throw new Error('frontend package.json must expose `npm run demo` (vite --mode demo)');
+  }
+  assertContains(read('.gitignore'), '!.env.demo', '.gitignore');
+  assertContains(read('frontend/mediflow-ui/src/demo/install.ts'), "VITE_DEMO_MODE !== 'true'", 'demo installer');
+  assertContains(read('frontend/mediflow-ui/src/api/client.ts'), "VITE_DEMO_MODE === 'true'", 'api client');
+});
+
+check('documented PowerShell developer scripts exist', () => {
+  for (const script of [
+    'scripts/run-service.ps1',
+    'scripts/start-demo.ps1',
+    'scripts/stop-infra.ps1',
+    'scripts/test-light.ps1',
+  ]) {
+    requireFile(script);
+    const text = read(script);
+    assertContains(text, '#Requires -Version 5.1', script);
+    assertContains(text, '$ErrorActionPreference', script);
+  }
+});
+
+check('CI validates the production Compose overlay', () => {
+  const ci = read('.github/workflows/ci.yml');
+  assertContains(ci, 'docker-compose.prod.yml', 'ci.yml');
+  assertContains(ci, '--env-file .env.prod', 'ci.yml');
+});
+
 console.log('');
 if (failures.length > 0) {
   console.log(`Release readiness: ${checks - failures.length}/${checks} checks passed, ${failures.length} failed`);

@@ -305,11 +305,11 @@ class AnalyticsServiceTest {
         when(paymentFactRepository.sumCollectedBetween(any(), any())).thenReturn(new BigDecimal("200.00"));
         when(paymentFactRepository.sumRefundedBetween(any(), any())).thenReturn(new BigDecimal("50.00"));
         when(invoiceFactRepository.monthlyInvoicedBetween(any(), any()))
-                .thenReturn(List.of(new Object[]{java.sql.Timestamp.valueOf("2026-07-01 00:00:00"), new BigDecimal("100.00")},
-                        new Object[]{java.sql.Timestamp.valueOf("2026-08-01 00:00:00"), new BigDecimal("200.00")}));
+                .thenReturn(List.of(new Object[]{java.sql.Timestamp.from(java.time.Instant.parse("2026-07-01T00:00:00Z")), new BigDecimal("100.00")},
+                        new Object[]{java.sql.Timestamp.from(java.time.Instant.parse("2026-08-01T00:00:00Z")), new BigDecimal("200.00")}));
         when(paymentFactRepository.monthlyPaymentsBetween(any(), any()))
-                .thenReturn(List.of(new Object[]{java.sql.Timestamp.valueOf("2026-08-01 00:00:00"), "COMPLETED", new BigDecimal("200.00")},
-                        new Object[]{java.sql.Timestamp.valueOf("2026-08-01 00:00:00"), "REFUNDED", new BigDecimal("50.00")}));
+                .thenReturn(List.of(new Object[]{java.sql.Timestamp.from(java.time.Instant.parse("2026-08-01T00:00:00Z")), "COMPLETED", new BigDecimal("200.00")},
+                        new Object[]{java.sql.Timestamp.from(java.time.Instant.parse("2026-08-01T00:00:00Z")), "REFUNDED", new BigDecimal("50.00")}));
 
         RevenueResponse response = analyticsService.getRevenue(from, to);
 
