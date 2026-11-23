@@ -6,7 +6,7 @@ specialist detail.
 
 - **Status:** Milestones 1–8 delivered. Working tree builds and verifies green (Maven/Testcontainers,
   43 Playwright tests, 31 release checks).
-- **Last verified against code:** 2026-11-21.
+- **Last verified against code:** 2026-11-23.
 - **Audience:** developers, reviewers, operators and future contributors.
 - **Safety:** MediFlow is a reference/demo platform. It is **not approved for real patient data**.
   Use synthetic data only.
@@ -38,6 +38,21 @@ for event propagation.
 | Frontend | Fully integrated SPA with JWT refresh, role-based routing, 12 pages wired to `/api/v1/**` through the gateway |
 | Demo mode | Frontend-only synthetic API, no backend or Docker required |
 | Delivery | Maven reactor, Docker images, Compose deployment, single-VM production overlay, GitHub Actions, cross-service E2E and release validation |
+
+### What is partially implemented
+
+These capabilities work but deliberately stop short of a production-complete feature:
+
+| Area | What exists | What is missing |
+|---|---|---|
+| Password reset | Request/confirm endpoints, hashed single-use tokens, session revocation | No mail delivery; `AUTH_PASSWORD_RESET_EXPOSE_TOKEN=true` returns the raw token in the response for local/dev only |
+| Notifications | In-app notifications for appointment created/updated/cancelled, invoice generated and payment confirmed | No notifications for medical-record events, invoice cancellation or refunds; no doctor fan-out |
+| Analytics | Eight consumed topics and five reporting endpoints | `medical-record.updated.v1` is not consumed, so record edits are not reflected |
+| Audit history | Append-only `appointment_history` and `medical_record_history` | Not backfilled for pre-M6 rows; medical-record history stores field names, not previous clinical values |
+| Identity validation | Profile creation verifies the Auth identity, role and ACTIVE status | A later role change or deactivation does not invalidate an existing profile |
+| Leave management | Availability windows and leave periods block bookings | No approval workflow; a created leave takes effect immediately |
+| Outbox | Atomic event write, scheduled relay, bounded retries and `DEAD` state | No archival/compaction of `PUBLISHED` rows |
+| Production deployment | Single-VM Compose overlay, nginx edge, health checks, documented backup/restore | No HA, automated backups/DR, registry/CD, centralized logging or tracing |
 
 ### What is **not** implemented
 
