@@ -1,4 +1,4 @@
-﻿<project xmlns="http://maven.apache.org/POM/4.0.0"
+<project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
@@ -35,7 +35,7 @@
     <postgresql.version>42.7.3</postgresql.version>
     <jackson.version>2.17.2</jackson.version>
     <jjwt.version>0.12.6</jjwt.version>
-    <springdoc.version>2.8.0</springdoc.version>
+    <springdoc.version>3.2.1</springdoc.version>
     <testcontainers.version>1.20.0</testcontainers.version>
     <!-- Surefire/Failsafe 3.5.x aligns with the JUnit Platform shipped by
          Spring Boot 3.5 and avoids the 3.2.5 provider resolution problem that
