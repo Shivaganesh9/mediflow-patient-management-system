@@ -23,7 +23,7 @@ configuration changes, and for an 8 GB machine.
 
 ```powershell
 # One command for the whole lightweight set
-.\scripts\test-light.ps1                  # build + typecheck + 43 Playwright tests + 31 static checks
+.\scripts\test-light.ps1                  # build + typecheck + 49 Playwright tests + 31 static checks
 .\scripts\test-light.ps1 -SkipE2E         # skip the browser run (fastest)
 ```
 
@@ -34,7 +34,7 @@ cd frontend\mediflow-ui
 npm ci
 npm run build              # tsc -b && vite build — type errors and bundle regressions
 npm run typecheck:e2e      # type-check the Playwright suite without running it
-npm run test:e2e           # 43 tests: 38 chromium (mocked API) + 5 demo
+npm run test:e2e           # 49 tests: 44 chromium (mocked API) + 5 demo
 npm run test:e2e:demo      # 5 demo-mode tests against vite --mode demo (port 3101)
 npm run test:e2e:headed    # watch a run
 npm run test:e2e:report    # open the HTML report after a failure
@@ -231,7 +231,7 @@ Deployment steps are in [production-deployment.md](production-deployment.md).
 |---|---|---|---|
 | `backend` | push + PR | `mvn -B -ntp -U clean verify` (full lifecycle); build output stays out of git | — |
 | `frontend` | push + PR | `npm ci`, `npm run typecheck:e2e`, `npm run build`; clean git status | — |
-| `browser-e2e` | push + PR | all Playwright projects (38 chromium + 5 demo) | `playwright-report` |
+| `browser-e2e` | push + PR | all Playwright projects (44 chromium + 5 demo) | `playwright-report` |
 | `release-checks` | push + PR | 31 static checks + `docker compose config` for dev, E2E and production overlay | — |
 | `docker-images` | push + PR | 9-service matrix: package + `docker build` | — |
 | `cross-service-e2e` | **push to `main`** or manual | full profile against PostgreSQL/Redis/Kafka | `cross-service-e2e-logs` |

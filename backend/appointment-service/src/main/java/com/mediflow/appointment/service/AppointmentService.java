@@ -19,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -75,7 +76,9 @@ public class AppointmentService {
     private final ClinicClock clinicClock;
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR','NURSE','PATIENT')")
     public Appointment createAppointment(CreateAppointmentRequest request) {
+        accessControl.assertCanMutate();
         validateTimeRange(request.getStartTime(), request.getEndTime());
         requireFuture(request.getStartTime());
         UUID patientId = accessControl.scopedPatientId(request.getPatientId());
@@ -133,7 +136,9 @@ public class AppointmentService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR','NURSE','PATIENT')")
     public Appointment updateAppointment(UUID appointmentId, UpdateAppointmentRequest request) {
+        accessControl.assertCanMutate();
         Appointment appointment = appointmentRepository.findByAppointmentIdForUpdate(appointmentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Appointment not found with id: " + appointmentId));
         accessControl.assertCanAccess(appointment);
@@ -183,7 +188,9 @@ public class AppointmentService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR','NURSE','PATIENT')")
     public Appointment cancelAppointment(UUID appointmentId) {
+        accessControl.assertCanMutate();
         Appointment appointment = appointmentRepository.findByAppointmentIdForUpdate(appointmentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Appointment not found with id: " + appointmentId));
         accessControl.assertCanAccess(appointment);
@@ -207,18 +214,22 @@ public class AppointmentService {
      * doctor, or staff) can confirm it; only clinical roles may move it further.
      */
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR','NURSE','PATIENT')")
     public Appointment confirmAppointment(UUID appointmentId) {
+        accessControl.assertCanMutate();
         return transition(appointmentId, AppointmentStatus.CONFIRMED,
                 AppointmentHistoryAction.CONFIRMED, CONFIRMABLE, "confirmed", false);
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR','NURSE')")
     public Appointment startAppointment(UUID appointmentId) {
         return transition(appointmentId, AppointmentStatus.IN_PROGRESS,
                 AppointmentHistoryAction.STARTED, STARTABLE, "started", true);
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR','NURSE')")
     public Appointment completeAppointment(UUID appointmentId) {
         return transition(appointmentId, AppointmentStatus.COMPLETED,
                 AppointmentHistoryAction.COMPLETED, COMPLETABLE, "completed", true);
@@ -229,6 +240,7 @@ public class AppointmentService {
      * clinical team decides whether the patient attended.
      */
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR','NURSE')")
     public Appointment markNoShow(UUID appointmentId) {
         return transition(appointmentId, AppointmentStatus.NO_SHOW,
                 AppointmentHistoryAction.NO_SHOW, NO_SHOWABLE, "marked as a no-show", true);

@@ -5,7 +5,7 @@ actually implemented, how the pieces fit together, how to run and verify it, and
 specialist detail.
 
 - **Status:** Milestones 1–8 delivered. Working tree builds and verifies green (Maven/Testcontainers,
-  43 Playwright tests, 31 release checks).
+  49 Playwright tests, 31 release checks).
 - **Last verified against code:** 2026-11-23.
 - **Audience:** developers, reviewers, operators and future contributors.
 - **Safety:** MediFlow is a reference/demo platform. It is **not approved for real patient data**.
@@ -27,7 +27,7 @@ for event propagation.
 
 | Area | Delivered |
 |---|---|
-| Identity and access | Registration, login by username or email, BCrypt passwords, HS256 JWT access tokens, rotating refresh tokens, logout, password change/reset, admin user/status/role management, account lockout, audit events |
+| Identity and access | Registration (PATIENT-only), login by username or email, BCrypt passwords, HS256 JWT access tokens, rotating refresh tokens, logout, password change/reset, admin user/status/role management, one-time administrator bootstrap, account lockout, audit events, method-level authorization |
 | Patients | Profile create/search/get/update/soft delete, duplicate-email handling, ownership rules |
 | Doctors | Profiles, availability windows per weekday, leave periods, soft deactivate/cancel, schedule validation API, ownership rules |
 | Appointments | Booking, search, reschedule, cancel, full lifecycle (`SCHEDULED → CONFIRMED → IN_PROGRESS → COMPLETED`, plus `CANCELLED`/`NO_SHOW`), database-enforced slot exclusion, append-only history |
@@ -168,6 +168,29 @@ The gateway (`backend/api-gateway/src/main/resources/application.yml`) owns the 
 
 It also proxies per-service OpenAPI documents (`/v3/api-docs/{service}`) and Swagger UI.
 
+```mermaid
+flowchart LR
+    SPA[React SPA] -->|"/api/v1/**"| GW[api-gateway :8080]
+    GW -->|/api/v1/auth| AUTH[auth-service :8081]
+    GW -->|/api/v1/patients| PAT[patient-service :8083]
+    GW -->|/api/v1/appointments| APPT[appointment-service :8084]
+    GW -->|/api/v1/doctors| DOC[doctor-service :8085]
+    GW -->|/api/v1/invoices, /api/v1/payments| BIL[billing-service :8087]
+    GW -->|/api/v1/medical-records| MR[medical-record-service :8091]
+    GW -->|/api/v1/notifications| NOTIF[notification-service :8089]
+    GW -->|/api/v1/analytics| ANA[analytics-service :8088]
+    PAT -.->|"internal identity (forwarded staff token)"| AUTH
+    DOC -.->|"internal identity (forwarded staff token)"| AUTH
+    APPT -.->|"internal schedule check (service JWT)"| DOC
+    APPT -.->|"events"| K[(Kafka)]
+    BIL -.->|"events"| K
+    MR -.->|"events"| K
+    K -.-> NOTIF
+    K -.-> ANA
+```
+
+Internal endpoints (`/internal/**`) are never gateway-routed.
+
 Gateway behaviour:
 
 - **No authentication filtering at the edge.** Every downstream service validates the bearer token.
@@ -179,6 +202,20 @@ Gateway behaviour:
   carry the same id.
 - **Timeouts.** Bounded connect/response timeouts and a bounded connection pool
   (`GATEWAY_*` variables).
+
+```mermaid
+flowchart LR
+    B["Browser api()"] -->|"UUID v4 (or caller id)"| G{"api-gateway"}
+    G -->|"valid: keep<br/>invalid: regenerate"| S[downstream service]
+    G -->|"echo X-Correlation-ID"| B
+    S -->|MDC| L[logs]
+    S -->|"event envelope correlationId"| K[(Kafka)]
+    S -->|"5xx"| E["ApiError.correlationId<br/>… (reference: id)"]
+```
+
+Correlation ids are tracing metadata only, never authorization. One id is reused by the proactive
+refresh, the request and the single `401` retry of the same logical call; the response header wins over
+the value the client sent.
 
 ### Frontend integration
 
@@ -266,7 +303,7 @@ There are exactly two synchronous cross-service dependencies, both internal (nev
 
 | Caller → callee | Endpoint | Credential |
 |---|---|---|
-| patient-service / doctor-service → auth-service | `GET /internal/identities/{userId}` | **Forwards the caller's staff access token**; auth-service authorizes the lookup itself (ADMIN/DOCTOR/NURSE/BILLING_STAFF/SUPPORT) |
+| patient-service / doctor-service → auth-service | `GET /internal/identities/{userId}` | **Forwards the caller's staff access token**; auth-service authorizes the lookup itself (ADMIN/DOCTOR only since M9) |
 | appointment-service → doctor-service | `GET /internal/doctors/{doctorId}/schedule/validation` | **Derived service credential**, not a user token (see below) |
 
 **Profile identity validation.** When an admin/staff member creates a patient or doctor profile with
@@ -391,16 +428,148 @@ Roles: `PATIENT`, `DOCTOR`, `NURSE`, `ADMIN`, `BILLING_STAFF`, `SUPPORT`. Unknow
 | Domain | Rule |
 |---|---|
 | Auth admin APIs | `ADMIN` only; admins cannot suspend themselves or remove their own `ADMIN` role |
+| Auth internal identity | `ADMIN`/`DOCTOR` only (no PATIENT/NURSE/BILLING_STAFF/SUPPORT) |
 | Patients | PATIENT reads/creates only their own profile; staff/doctor/admin may read; profile updates ADMIN/DOCTOR; delete ADMIN |
 | Doctors | DOCTOR manages only their own profile/schedule; ADMIN any; search is authenticated-wide |
-| Appointments | PATIENT scoped to own `patientId`; DOCTOR to own `doctorId`; staff broad. Confirm = anyone with access; start/complete/no-show = ADMIN/DOCTOR/NURSE |
+| Appointments | PATIENT scoped to own `patientId`; DOCTOR to own `doctorId`; staff broad **reads**. Create/reschedule/confirm/cancel: ADMIN/DOCTOR/NURSE/PATIENT (BILLING_STAFF and SUPPORT read-only); start/complete/no-show: ADMIN/DOCTOR/NURSE |
 | Medical records | Write ADMIN/DOCTOR; read ADMIN/DOCTOR/PATIENT only, scoped by ownership (NURSE/BILLING_STAFF/SUPPORT denied PHI) |
 | Billing | Writes ADMIN/BILLING_STAFF; reads ADMIN/BILLING_STAFF/DOCTOR/NURSE/SUPPORT plus PATIENT scoped to own invoices |
 | Notifications | Scoped to `recipient_id == uid`; mark-read owner-only |
 | Analytics | ADMIN/DOCTOR only |
 
-Ownership is enforced in services, not controllers. The authoritative matrix is in
+Ownership is enforced in services, not controllers. Since M9 the sensitive service methods also carry
+`@PreAuthorize` (`@EnableMethodSecurity` per service), so a URL-matcher mistake cannot widen a write
+path; role annotations never replace the ownership checks. The authoritative matrix is in
 [security.md](security.md) §6–8.
+
+**Why `SUPPORT` stays.** It is a read-only operational role (help desk/front office): appointments,
+invoices, patient/doctor directories and its own notifications, but no mutations and no clinical data.
+It exists so those users do not have to be given `BILLING_STAFF` or `ADMIN` write access.
+
+### Identity lifecycle
+
+Public registration is PATIENT-only; the request cannot choose a role.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant A as auth-service
+    B->>A: POST /api/v1/auth/register
+    A->>A: validate + PasswordPolicy
+    A->>A: insert user ACTIVE + role PATIENT (hard-coded)
+    A-->>B: 201 tokens
+```
+
+The first administrator is created once by the bootstrap runner (disabled by default), never by a
+public endpoint:
+
+```mermaid
+flowchart TD
+    S[auth-service start] --> E{"BOOTSTRAP_ADMIN_ENABLED?"}
+    E -- no --> X[no-op]
+    E -- yes --> P{"seed profile?"}
+    P -- yes --> X
+    P -- no --> Q{"ADMIN already exists?"}
+    Q -- yes --> X2[skip - never overwrite]
+    Q -- no --> V{"config valid + password policy?"}
+    V -- no --> F[fail fast]
+    V -- yes --> C[create ACTIVE ADMIN]
+    C --> AU[audit ADMIN_BOOTSTRAPPED]
+```
+
+Doctor/staff onboarding is: self-register (PATIENT) → ADMIN grants the role
+(`PATCH /api/v1/auth/users/{id}/roles`, which revokes sessions) → re-login → the doctor creates their own
+profile, or an ADMIN creates it with `userId` after the internal identity check.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Op as ADMIN
+    participant U as Staff user
+    participant A as auth-service
+    participant D as doctor-service
+    U->>A: register (PATIENT)
+    Op->>A: PATCH roles (DOCTOR/NURSE/BILLING_STAFF)
+    A->>A: revoke sessions + audit
+    U->>A: login (token now carries the role)
+    alt Doctor self-service
+        U->>D: POST /api/v1/doctors (userId = own uid)
+    else Admin creates profile
+        Op->>D: POST /api/v1/doctors + userId
+        D->>A: GET /internal/identities/{id} (ADMIN/DOCTOR only)
+    end
+```
+
+Login issues a short-lived access token and a rotating refresh token:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant A as auth-service
+    participant R as Redis
+    B->>A: POST /api/v1/auth/login
+    A->>A: status + lockout + BCrypt
+    A->>A: create refresh family (sid), store SHA-256 hash
+    A-->>B: access 15m (type=access, roles) + refresh 7d (type=refresh, no roles)
+    B->>A: GET /api/v1/auth/me
+    A->>R: isRevoked(jti, uid, sid, iat)
+    A-->>B: profile
+```
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant A as auth-service
+    participant R as Redis
+    alt Refresh (proactive or 401)
+        B->>A: POST /api/v1/auth/refresh
+        A->>A: row lock, verify hash, rotate token
+        A-->>B: new pair
+    else Logout
+        B->>A: POST /api/v1/auth/logout
+        A->>R: revoke jti + sid
+        A->>A: revoke refresh family
+    end
+    Note over A,R: Role/status/password changes revoke every session (uid epoch).
+```
+
+### Service configuration ownership
+
+| Concern | Owner | Notes |
+|---|---|---|
+| `JWT_SECRET` | auth-service (issuer) + every verifier | Same value everywhere; no default; ≥ 256 bits |
+| Token lifetimes, refresh grace, password policy | auth-service (`auth.*`) | Refresh rotation and lockout live only here |
+| Revocation keys/TTL/fail-open | `common-library` defaults, env per service | All services must point at the same Redis |
+| URL matchers | each service `SecurityConfig` | Defence in depth, not the only control |
+| Method authorization | each service `@PreAuthorize` | Sensitive write operations |
+| Ownership rules | each service `AccessControlService` | Role ≠ relationship |
+| Internal service credential | appointment-service (mints) / doctor-service (verifies) | Key derived from `JWT_SECRET` with a fixed context |
+| Correlation id | api-gateway (validate/regenerate/echo) | Browser may send; never trusted as identity |
+| CORS | api-gateway | Downstream CORS headers are deduplicated |
+| Admin bootstrap | auth-service (`BOOTSTRAP_ADMIN_*`) | One-time, disabled by default, skipped by `seed` |
+
+### JWT findings
+
+HS256 with one shared secret is sound for this single trust domain: verification pins the algorithm,
+refresh tokens cannot authenticate, rotation uses a row lock plus reuse detection, and revocation is
+shared through Redis (fail-closed) with an account-status check in auth-service. Residual risks:
+
+- **Shared secret = shared minting power.** Any service that holds `JWT_SECRET` can forge a token for
+  any user or service. A compromised low-value service compromises the whole platform.
+- **No `iss`/`aud` on user tokens**, so a future second issuer would need an explicit check.
+- **Secret distribution** is a file-based `.env`/`.env.prod`, with no KMS/vault.
+- **Redis persistence gap:** losing the volume drops markers; tokens stay valid until expiry (≤ 15 min).
+
+Recommended (not implemented) migration to asymmetric signing: auth-service alone holds the private
+key, publishes `kid` + JWKS, and every other service verifies with the public key. Sequence it as
+(1) publish JWKS, (2) issue RS256 while still accepting HS256 for verification, (3) move consumers to
+public-key verification, (4) retire HS256 after the refresh lifetime plus skew. Never rotate keys
+abruptly — that would invalidate every live session. Split the internal service-credential derivation
+onto its own secret at the same time.
+
 
 ### Account protection
 
@@ -423,7 +592,7 @@ not implemented.
 
 ### Doctor
 
-1. A doctor profile is created (self-service or admin/staff with identity validation).
+1. A doctor profile is created by the doctor (self-service) or by an ADMIN with identity validation.
 2. The doctor or an ADMIN adds availability windows per weekday and leave periods. Overlapping
    windows on the same day and overlapping active leaves return 409.
 3. Deactivating a window sets `active=false`; cancelling leave sets `deleted_at`, keeping history.
@@ -444,6 +613,8 @@ not implemented.
 5. Every create/reschedule/transition writes an `appointment_history` row in the same transaction.
    `GET /api/v1/appointments/{id}/history` uses the appointment's access rules.
 6. Updates publish `appointment.updated.v1`; cancellation publishes `appointment.cancelled.v1`.
+7. `SUPPORT` can read appointments and their history but cannot create, reschedule, confirm or cancel
+   (403); clinical transitions remain ADMIN/DOCTOR/NURSE.
 
 ### Medical record
 
@@ -619,7 +790,7 @@ Full detail: [demo-mode.md](demo-mode.md).
 
 | Layer | Command | Requires | Proves |
 |---|---|---|---|
-| **A. Lightweight local** | `.\scripts\test-light.ps1` (add `-SkipE2E` for build-only) | Node 24, Chromium | Build integrity, 43 Playwright tests, 31 static release checks |
+| **A. Lightweight local** | `.\scripts\test-light.ps1` (add `-SkipE2E` for build-only) | Node 24, Chromium | Build integrity, 49 Playwright tests, 31 static release checks |
 | **B. Maven / Testcontainers** | `mvn -B -ntp -U clean verify` | JDK 21, Docker | Service behaviour, security, SQL constraints, Kafka idempotency, migrations |
 | **C. Cross-service E2E** | `node testing/e2e/run-e2e.mjs --profile=core\|full [--build] [--keep]` | Docker, JDK 21, Node 24 | Gateway routing, service-to-service auth, Kafka fan-out, shared revocation, readiness |
 | **D. Release validation** | `node testing/release/check-release-readiness.mjs`; `node testing/release/smoke.mjs --build` | Node / Docker + JDK 21 | Production configuration, secrets, images, profile-less boot, recovery |
@@ -637,7 +808,7 @@ cd frontend/mediflow-ui
 npm ci
 npm run typecheck:e2e
 npm run build
-npm run test:e2e            # 43 tests (38 chromium + 5 demo), ~50 s
+npm run test:e2e            # 49 tests (44 chromium + 5 demo), ~50 s
 npm run test:e2e:demo       # 5 demo tests only
 npm run test:e2e:install    # one-time Chromium install
 ```
@@ -657,7 +828,7 @@ Full matrix, artifacts, log locations and reruns: [testing.md](testing.md).
 
 - **backend** — `mvn -B -ntp -U clean verify` on Temurin JDK 21.
 - **frontend** — `npm ci`, `npm run typecheck:e2e`, `npm run build` on Node 24 LTS (`.nvmrc`).
-- **browser-e2e** — all 43 Playwright tests.
+- **browser-e2e** — all 49 Playwright tests.
 - **release-checks** — 31 static release-readiness checks.
 - **compose-validation** — base, E2E and production Compose overlays.
 - **docker-images** — a 9-service matrix that packages and builds each image.
@@ -750,6 +921,12 @@ reconciliation SQL: [runbook.md](runbook.md).
   already-issued tokens valid until expiry (≤ 15 min); rotate `JWT_SECRET` afterwards.
 - No per-IP/global rate limiting, bot detection or CAPTCHA (only per-account lockout).
 - No mTLS between services; `/internal/**` isolation is network-level only.
+- HS256 uses one `JWT_SECRET` shared by all nine services, so any service can mint tokens for any
+  other. Migrating to asymmetric signing (auth-service private key + JWKS public verification) is the
+  recommended next security step; see [security.md](security.md) §16.7 for the staged plan.
+- The one-time administrator bootstrap is manual by design: there is no public admin signup and no
+  invite/activation email flow, so an operator must enable `BOOTSTRAP_ADMIN_*` for the first start and
+  disable it afterwards.
 - Outbox `PUBLISHED` rows are never archived; a production deployment should add retention deletion.
 - The frontend Dockerfile runs the Vite dev server; production uses static `dist/` behind nginx.
 
@@ -790,6 +967,9 @@ reconciliation SQL: [runbook.md](runbook.md).
    internal service credential.
 8. **M8 — Docs, demo and deployment:** documentation consolidation, frontend demo mode,
    low-resource scripts, single-VM production overlay, CI modernization.
+9. **M9 — Authorization, onboarding and traceability:** method-level authorization on sensitive
+   service operations, read-only SUPPORT, ADMIN/DOCTOR-only internal identity lookup, one-time
+   administrator bootstrap, frontend correlation ids, JWT review and identity-lifecycle diagrams.
 
 ### Next
 

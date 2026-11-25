@@ -15,6 +15,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +33,7 @@ public class PatientService {
     private final IdentityVerifier identityVerifier;
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','PATIENT','DOCTOR')")
     public Patient createPatient(CreatePatientRequest request) {
         if (patientRepository.existsByEmailAndDeletedAtIsNull(request.getEmail())) {
             throw new IllegalArgumentException("A patient with this email already exists");
@@ -75,6 +77,7 @@ public class PatientService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public Patient updatePatient(UUID patientId, CreatePatientRequest request) {
         Patient patient = getPatient(patientId);
         if (patientRepository.existsByEmailAndPatientIdNotAndDeletedAtIsNull(request.getEmail(), patientId)) {
@@ -87,6 +90,7 @@ public class PatientService {
     }
 
     @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
     public void deletePatient(UUID patientId) {
         Patient patient = getPatient(patientId);
         patient.setDeletedAt(java.time.Instant.now());

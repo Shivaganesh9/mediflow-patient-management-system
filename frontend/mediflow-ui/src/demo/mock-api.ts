@@ -386,6 +386,13 @@ export class MockApi {
   readonly emptyPaths = new Set<string>();
   /** When set, appointment creation answers 409 with this message. */
   appointmentConflict: string | null = null;
+  /**
+   * When set, every response echoes this value instead of the request's `X-Correlation-ID`.
+   * Mirrors a gateway that regenerates an unsafe caller-supplied id and lets tests prove the
+   * client reads the server-returned value.
+   */
+  correlationIdOverride: string | null = null;
+  private currentCorrelationId: string | null = null;
 
   private readonly users = new Map<string, User>();
   private readonly accessTokens = new Map<string, string>();
@@ -742,6 +749,10 @@ export class MockApi {
     const path = url.pathname;
     const body = parseBody(request.postData());
     const headers = request.headers();
+    // Echo the gateway contract: the accepted/regenerated id is returned on the response.
+    this.currentCorrelationId = this.correlationIdOverride
+      ?? headersValue(headers, 'x-correlation-id')
+      ?? null;
 
     this.requests.push({ method, path, query: url.searchParams, headers, body });
 
@@ -1840,6 +1851,11 @@ export class MockApi {
 
   // ---------------------------------------------------------------- transport helpers
 
+  /** Correlation headers echoed on every response, matching the gateway contract. */
+  private correlationHeaders(): Record<string, string> {
+    return this.currentCorrelationId ? { 'X-Correlation-ID': this.currentCorrelationId } : {};
+  }
+
   private async ok(
     route: Responder,
     data: unknown,
@@ -1848,7 +1864,11 @@ export class MockApi {
   ): Promise<void> {
     await route.fulfill({
       status,
-      headers: { ...(headers ?? {}), 'content-type': 'application/json' },
+      headers: {
+        ...this.correlationHeaders(),
+        ...(headers ?? {}),
+        'content-type': 'application/json',
+      },
       body: JSON.stringify({
         success: true,
         message: 'OK',
@@ -1861,7 +1881,7 @@ export class MockApi {
   private async failWith(route: Responder, status: number, message: string): Promise<void> {
     await route.fulfill({
       status,
-      headers: { 'content-type': 'application/json' },
+      headers: { ...this.correlationHeaders(), 'content-type': 'application/json' },
       body: JSON.stringify({
         success: false,
         message,

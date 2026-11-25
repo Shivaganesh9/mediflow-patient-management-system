@@ -5,7 +5,6 @@ import com.mediflow.auth.entity.User;
 import com.mediflow.auth.repository.RoleRepository;
 import com.mediflow.auth.repository.UserRepository;
 import com.mediflow.common.enums.AccountStatus;
-import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,6 +48,9 @@ class InternalIdentityControllerIntegrationTest {
     void setUp() {
         ensureUser("internal-admin", "ADMIN", AccountStatus.ACTIVE);
         ensureUser("internal-doctor", "DOCTOR", AccountStatus.ACTIVE);
+        ensureUser("internal-nurse", "NURSE", AccountStatus.ACTIVE);
+        ensureUser("internal-billing", "BILLING_STAFF", AccountStatus.ACTIVE);
+        ensureUser("internal-support", "SUPPORT", AccountStatus.ACTIVE);
     }
 
     @Test
@@ -101,6 +103,31 @@ class InternalIdentityControllerIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    /**
+     * Profile provisioning is an ADMIN/DOCTOR duty. Operational roles that only read
+     * appointments or invoices must not be able to enumerate identities.
+     */
+    @Test
+    void operationalRolesAreForbidden() throws Exception {
+        UUID patientId = ensureUser("internal-patient", "PATIENT", AccountStatus.ACTIVE);
+
+        for (String username : List.of("internal-nurse", "internal-billing", "internal-support")) {
+            mockMvc.perform(get("/internal/identities/" + patientId)
+                            .header("Authorization", "Bearer " + token(username)))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    void suspendedStaffCallerIsRejected() throws Exception {
+        ensureUser("internal-suspended-admin", "ADMIN", AccountStatus.SUSPENDED);
+        UUID patientId = ensureUser("internal-patient", "PATIENT", AccountStatus.ACTIVE);
+
+        mockMvc.perform(get("/internal/identities/" + patientId)
+                        .header("Authorization", "Bearer " + token("internal-suspended-admin")))
+                .andExpect(status().isUnauthorized());
+    }
+
     @Test
     void unauthenticatedRequestIsRejected() throws Exception {
         mockMvc.perform(get("/internal/identities/" + UUID.randomUUID()))
@@ -125,17 +152,17 @@ class InternalIdentityControllerIntegrationTest {
                 });
     }
 
+    /**
+     * The auth-service filter reloads the account and its roles from the database, so the token
+     * only needs a valid signature and subject. That is also why the forbidden-role cases above
+     * can rely on real users instead of forged role claims.
+     */
     private String token(String username) {
-        JwtBuilder builder = Jwts.builder()
+        return Jwts.builder()
                 .subject(username)
-                .claim("roles", switch (username) {
-                    case "internal-admin" -> List.of("ADMIN");
-                    case "internal-doctor" -> List.of("DOCTOR");
-                    default -> List.of("PATIENT");
-                })
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + 600_000))
-                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256);
-        return builder.compact();
+                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256)
+                .compact();
     }
 }

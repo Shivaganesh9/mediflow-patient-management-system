@@ -142,6 +142,41 @@ class AccessControlServiceTest {
     }
 
     @Test
+    void mutationRolesMayChangeAppointments() {
+        for (String role : List.of("ADMIN", "DOCTOR", "NURSE", "PATIENT")) {
+            authenticate(role.toLowerCase(), UUID.randomUUID(), List.of(role));
+            assertTrue(accessControl.canMutate(), role + " should be able to mutate appointments");
+            accessControl.assertCanMutate();
+        }
+    }
+
+    /**
+     * BILLING_STAFF owns invoices and payments, not scheduling: it can look up appointments but
+     * must never create, reschedule, confirm or cancel one.
+     */
+    @Test
+    void billingStaffMayReadButNotMutateAppointments() {
+        authenticate("billing1", UUID.randomUUID(), List.of("BILLING_STAFF"));
+
+        assertTrue(accessControl.canAccess(appointmentFor(UUID.randomUUID(), UUID.randomUUID())));
+        assertFalse(accessControl.canMutate());
+        assertThrows(AccessDeniedException.class, accessControl::assertCanMutate);
+    }
+
+    /**
+     * SUPPORT is deliberately read-only: it can look up appointments but must never create,
+     * reschedule, confirm or cancel one.
+     */
+    @Test
+    void supportMayReadButNotMutateAppointments() {
+        authenticate("support1", UUID.randomUUID(), List.of("SUPPORT"));
+
+        assertTrue(accessControl.canAccess(appointmentFor(UUID.randomUUID(), UUID.randomUUID())));
+        assertFalse(accessControl.canMutate());
+        assertThrows(AccessDeniedException.class, accessControl::assertCanMutate);
+    }
+
+    @Test
     void currentUserIdIsEmptyWithoutAuthentication() {
         assertNull(accessControl.currentUserId());
         assertNull(accessControl.currentUsername());

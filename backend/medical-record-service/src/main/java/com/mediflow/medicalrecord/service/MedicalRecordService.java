@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +47,7 @@ public class MedicalRecordService {
     private final ClinicClock clinicClock;
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public MedicalRecord createMedicalRecord(CreateMedicalRecordRequest request) {
         validateEncounterDate(request.getEncounterDate());
 
@@ -96,6 +98,7 @@ public class MedicalRecordService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public MedicalRecord updateMedicalRecord(UUID recordId, UpdateMedicalRecordRequest request) {
         MedicalRecord medicalRecord = medicalRecordRepository.findByRecordIdForUpdate(recordId)
                 .orElseThrow(() -> new ResourceNotFoundException("Medical record not found with id: " + recordId));

@@ -11,6 +11,7 @@ import com.mediflow.doctor.repository.DoctorAvailabilityRepository;
 import com.mediflow.doctor.repository.DoctorLeaveRepository;
 import com.mediflow.doctor.repository.DoctorRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,6 +44,7 @@ public class DoctorScheduleService {
     private final DoctorLeaveRepository leaveRepository;
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public DoctorAvailability addAvailability(UUID doctorId, AvailabilityRequest request) {
         doctorService.getDoctor(doctorId);
         validateWindow(request.getStartTime(), request.getEndTime());
@@ -59,6 +61,7 @@ public class DoctorScheduleService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public DoctorAvailability updateAvailability(UUID doctorId, UUID availabilityId,
                                                  AvailabilityRequest request) {
         doctorService.getDoctor(doctorId);
@@ -87,6 +90,7 @@ public class DoctorScheduleService {
      * new bookings.
      */
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public DoctorAvailability deactivateAvailability(UUID doctorId, UUID availabilityId) {
         doctorService.getDoctor(doctorId);
         DoctorAvailability availability = availabilityRepository
@@ -105,6 +109,7 @@ public class DoctorScheduleService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public DoctorLeave addLeave(UUID doctorId, LeaveRequest request) {
         doctorService.getDoctor(doctorId);
         validateLeaveRange(request.getStartDate(), request.getEndDate());
@@ -119,6 +124,7 @@ public class DoctorScheduleService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public DoctorLeave updateLeave(UUID doctorId, UUID leaveId, LeaveRequest request) {
         doctorService.getDoctor(doctorId);
         DoctorLeave leave = leaveRepository
@@ -139,6 +145,7 @@ public class DoctorScheduleService {
      * an operator if it was cancelled by mistake.
      */
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public DoctorLeave cancelLeave(UUID doctorId, UUID leaveId) {
         doctorService.getDoctor(doctorId);
         DoctorLeave leave = leaveRepository

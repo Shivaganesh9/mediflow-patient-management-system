@@ -18,6 +18,7 @@ public class AuthProperties {
     private PasswordPolicy password = new PasswordPolicy();
     private Refresh refresh = new Refresh();
     private PasswordReset passwordReset = new PasswordReset();
+    private Bootstrap bootstrap = new Bootstrap();
 
     @Data
     public static class PasswordPolicy {
@@ -46,5 +47,22 @@ public class AuthProperties {
          * development and automated tests - there is no mail infrastructure in this project.
          */
         private boolean exposeToken = false;
+    }
+
+    /**
+     * One-time production administrator bootstrap.
+     *
+     * <p>Disabled by default and only consulted when the database contains no ADMIN account, so
+     * it can never overwrite an existing administrator. The password is validated against the
+     * same {@link com.mediflow.auth.service.PasswordPolicy} as every other account. Enable it for
+     * the first start, sign in, then disable it again.</p>
+     */
+    @Data
+    public static class Bootstrap {
+        private boolean enabled = false;
+        private String username;
+        private String email;
+        private String password;
+        private String fullName = "Initial Administrator";
     }
 }

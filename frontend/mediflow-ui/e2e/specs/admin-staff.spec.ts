@@ -110,6 +110,21 @@ test.describe('admin and staff workflows', () => {
     await expect(page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Medical Records' })).toBeHidden();
   });
 
+  test('support staff see appointments read-only', async ({ page }) => {
+    await signIn(page, 'SUPPORT');
+
+    await page.goto('/appointments');
+
+    await expect(page.getByRole('heading', { name: /Coordinate every visit/ })).toBeVisible();
+    // SUPPORT may look appointments up but must not create, reschedule, confirm or cancel one.
+    await expect(page.getByRole('button', { name: 'Schedule visit' })).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Confirm' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Reschedule' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
+    // The audit trail stays available so support can answer "what happened?" questions.
+    await expect(page.getByRole('button', { name: 'History' }).first()).toBeVisible();
+  });
+
   test('billing staff cannot open analytics', async ({ page }) => {
     await signIn(page, 'BILLING_STAFF');
 

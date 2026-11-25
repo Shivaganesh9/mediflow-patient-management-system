@@ -16,6 +16,15 @@ public class AccessControlService {
 
     private static final Set<String> STAFF_ROLES = Set.of("NURSE", "BILLING_STAFF", "SUPPORT");
 
+    /**
+     * Roles allowed to create, reschedule, confirm or cancel an appointment. BILLING_STAFF and
+     * SUPPORT are intentionally read-only: billing staff own invoices and payments, support staff
+     * answer operational questions, and neither may change scheduling state. Clinical transitions
+     * (start/complete/no-show) are narrower still and require {@link #hasClinicalAccess()}.
+     */
+    private static final Set<String> MUTATION_ROLES =
+            Set.of("ADMIN", "DOCTOR", "NURSE", "PATIENT");
+
     public Optional<AuthenticatedUser> currentUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !(authentication.getPrincipal() instanceof AuthenticatedUser user)) {
@@ -68,6 +77,18 @@ public class AccessControlService {
         if (!hasClinicalAccess()) {
             throw new AccessDeniedException(
                     "Only clinical staff may change the clinical state of an appointment");
+        }
+    }
+
+    /** True when the caller may create, reschedule, confirm or cancel appointments. */
+    public boolean canMutate() {
+        return hasAnyRole(MUTATION_ROLES);
+    }
+
+    public void assertCanMutate() {
+        if (!canMutate()) {
+            throw new AccessDeniedException(
+                    "Your role can read appointments but cannot change them");
         }
     }
 

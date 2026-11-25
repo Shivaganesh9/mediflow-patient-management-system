@@ -1,6 +1,6 @@
 # MediFlow Security
 
-*Status: reflects the implemented codebase (updated 2026-11-20, Milestone 8 - demo mode & single-VM deployment).*
+*Status: reflects the implemented codebase (updated 2026-11-24, Milestone 9 - authorization hardening, secure onboarding and request correlation).*
 
 ## 1. Authentication model
 
@@ -81,7 +81,14 @@ Revocation triggers:
 
 ## 6. Role model
 
-`common-library` `UserRole` enum: `PATIENT`, `DOCTOR`, `NURSE`, `ADMIN`, `BILLING_STAFF`, `SUPPORT`. Migrations seed the full catalogue (V1: `PATIENT`/`DOCTOR`/`ADMIN`; V3: `NURSE`/`BILLING_STAFF`/`SUPPORT`). Registration always assigns `PATIENT` - the client-supplied `role` field is ignored (previously, supplying `role=ADMIN`/`DOCTOR` on registration escalated the new account to a privileged role; fixed 2026-08-18). Privileged roles are granted only through the admin API, the seeders or an operator directly in the DB.
+`common-library` `UserRole` enum: `PATIENT`, `DOCTOR`, `NURSE`, `ADMIN`, `BILLING_STAFF`, `SUPPORT`. Migrations seed the full catalogue (V1: `PATIENT`/`DOCTOR`/`ADMIN`; V3: `NURSE`/`BILLING_STAFF`/`SUPPORT`). Registration always assigns `PATIENT` - the client-supplied `role` field is ignored (previously, supplying `role=ADMIN`/`DOCTOR` on registration escalated the new account to a privileged role; fixed 2026-08-18). Privileged roles are granted only through the admin API, the one-time bootstrap, the seeders or an operator directly in the DB.
+
+**Why `SUPPORT` exists.** It is a read-only operational role for help-desk/front-office staff: it can
+look up appointments, invoices, patient and doctor directories and its own notifications so it can
+answer "where is my invoice / when is my visit?" questions, but it cannot mutate business state and
+cannot read clinical records. It is not a stepping stone to another role; if an organisation does not
+run a help desk, the role can simply go unused. It exists because removing it would force those users
+onto `BILLING_STAFF` or `ADMIN`, which carry write access they must not have.
 
 The dev-only `seed` profile creates one deterministic account per role (`admin`, `doctor`, `patient`, `nurse`, `billing`, `support`; see `DevSeedData`) so every authorization path can be exercised end to end. It is idempotent and must never run against production data.
 
@@ -96,8 +103,8 @@ The dev-only `seed` profile creates one deterministic account per role (`admin`,
 | Doctor profile create/update | yes | own only | no | no | no | no |
 | Doctor profile read / search | all | own profile only (search open) | all (search) | all | all | all |
 | Doctor availability/leave write | yes | own only | no | no | no | no |
-| Appointment read/reschedule/cancel | all | own only | own only | all | all | all |
-| Appointment confirm | all | own only | own only | all | all | all |
+| Appointment read / history | all | own only | own only | all | all | all |
+| Appointment create/reschedule/cancel/confirm | all | own only | own only | all | **no** | **no** |
 | Appointment start/complete/no-show | all | own only | no | yes | no | no |
 | Medical record read | all | own records | own records | **no** | **no** | **no** |
 | Medical record audit history read | all | own records | own records | **no** | **no** | **no** |
@@ -108,21 +115,59 @@ The dev-only `seed` profile creates one deterministic account per role (`admin`,
 | Notification read/mark-read | all | own (`recipient_id == uid`) | own | own | own | own |
 | Analytics | all | all | no | no | no | no |
 | Account administration (`/api/v1/auth/users/**`) | yes | no | no | no | no | no |
+| Identity lookup (`/internal/identities/{id}`) | yes | yes | no | no | no | no |
 
 Any authenticated principal whose role is not in the relevant allow-list is denied (403), including obsolete/unknown role strings. Authentication (401) always precedes authorization (403). The matrix is enforced by each service; the frontend mirrors it for UX only.
+
+### Two enforcement layers
+
+Since M9 every sensitive service operation carries a **method-level** rule (`@EnableMethodSecurity` +
+`@PreAuthorize` on the service method) in addition to the URL matcher in `SecurityConfig` and the
+ownership checks in `AccessControlService`:
+
+| Layer | Answers | Example |
+|---|---|---|
+| URL matcher | "may this role call this endpoint shape at all?" | `POST /api/v1/invoices` → ADMIN/BILLING_STAFF |
+| `@PreAuthorize` on the service method | "may this role perform this operation?" | `InvoiceService.createInvoice` → ADMIN/BILLING_STAFF |
+| `AccessControlService` ownership | "may this caller touch *this* row?" | patient/doctor scoped to own `patientId`/`doctorId` |
+
+The layers are deliberately redundant: a future matcher mistake cannot silently widen a write path,
+and a role annotation never replaces an ownership check (role ≠ relationship).
+
+```mermaid
+flowchart TD
+    A[Bearer token] --> B{Signature, exp, type, revocation}
+    B -- invalid --> U[401]
+    B -- valid --> C[Load identity and roles]
+    C --> D{URL matcher}
+    D -- denied --> F[403]
+    D -- allowed --> E{"@PreAuthorize on service method"}
+    E -- denied --> F
+    E -- allowed --> G{Ownership / relationship check}
+    G -- denied --> F
+    G -- allowed --> H[Business operation]
+```
 
 ## 7. Endpoint authorization (per service)
 
 | Service | Rules (from `SecurityConfig`) |
 |---|---|
-| auth | `/register`, `/login`, `/refresh`, `/password-reset/**` public; `/api/v1/auth/users/**` → ADMIN; everything else authenticated |
+| auth | `/register`, `/login`, `/refresh`, `/password-reset/**` public; `/api/v1/auth/users/**` → ADMIN; `/internal/**` → ADMIN, DOCTOR; everything else authenticated |
 | patient | DELETE `/api/v1/patients/**` → ADMIN; POST → ADMIN, PATIENT, DOCTOR; PUT → ADMIN, DOCTOR; GET → authenticated (PATIENT list/search scoped to own profile) |
 | doctor | POST/PUT/DELETE `/api/v1/doctors/**` (including availability/leave writes) → ADMIN, DOCTOR (DOCTOR own profile only); GET → authenticated |
 | medical-record | POST `/api/v1/medical-records` and PUT `/api/v1/medical-records/*` → ADMIN, DOCTOR (DOCTOR own records only); GET → authenticated but service-level ownership denies NURSE/BILLING_STAFF/SUPPORT (403) |
 | billing | invoice/payment writes → ADMIN, BILLING_STAFF; reads → explicit set ADMIN, BILLING_STAFF, DOCTOR, NURSE, SUPPORT (PATIENT scoped to own invoices; unknown roles → 403) |
-| appointment | all → authenticated; PATIENT/DOCTOR scoped to own identity, staff (ADMIN/NURSE/BILLING_STAFF/SUPPORT) broad, unknown roles → 403 |
+| appointment | all → authenticated; PATIENT/DOCTOR scoped to own identity, staff (ADMIN/NURSE/BILLING_STAFF/SUPPORT) broad reads, BILLING_STAFF and SUPPORT read-only, unknown roles → 403 |
 | notification | all → authenticated; reads scoped to `recipient_id == uid`, mark-read owner-only (ADMIN bypass) |
 | analytics | all `/api/v1/analytics/**` → ADMIN, DOCTOR (all other roles, including PATIENT/NURSE/BILLING_STAFF/SUPPORT → 403) |
+
+Method-level rules (M9) duplicate the write matchers in the service layer:
+`InvoiceService`/`PaymentCommandService` (`ADMIN`,`BILLING_STAFF`), `MedicalRecordService`
+(`ADMIN`,`DOCTOR`), `PatientService` create (`ADMIN`,`PATIENT`,`DOCTOR`)/update (`ADMIN`,`DOCTOR`)/delete
+(`ADMIN`), `DoctorService` + `DoctorScheduleService` (`ADMIN`,`DOCTOR`), `AppointmentService` mutations
+(`ADMIN`,`DOCTOR`,`NURSE`,`PATIENT`), `AccountLifecycleService` (`ADMIN`) and
+`AuthServiceImpl.getIdentity` (`ADMIN`,`DOCTOR`).
+
 
 > **Dead `STAFF` grants removed (2026-11-12):** patient-service (`POST`/`PUT`) and doctor-service (`POST`/`PUT` plus the redundant schedule matcher) previously referenced `STAFF`, which is not in the `UserRole` enum and is never issued. The literals were removed rather than replaced with broader grants: `NURSE`, `BILLING_STAFF` and `SUPPORT` do **not** gain patient/doctor profile-write access. Appointment and billing `AccessControlService` sets likewise dropped the dead `"STAFF"` entry. Any token carrying `ROLE_STAFF` (or any other unknown role) is treated as unauthorized (403).
 
@@ -133,7 +178,7 @@ The JWT `uid` (Auth `User.id`) is compared to stored business ids.
 - **Patients:** `Patient.patientId == uid`. A PATIENT can only access/list their own profile; authenticated staff/doctor/admin may read profiles, while updates are restricted to ADMIN/DOCTOR by the endpoint matcher. Patient creation by a PATIENT is forced to their own uid; deleting a profile is ADMIN-only.
 - **Doctors:** `Doctor.doctorId == uid`. A DOCTOR can only access/update their own profile and schedule; discovery/search is unaffected (any authenticated caller can search). Creation by a DOCTOR is forced to their own uid.
 - **Medical records:** `MedicalRecord.doctorId == uid` for doctors; PATIENT read access requires `MedicalRecord.patientId == uid`; admin bypass. Search is scoped (`scopedPatientId`/`scopedDoctorId`) so a doctor only sees their own records and a patient only their own. NURSE/BILLING_STAFF/SUPPORT and unknown roles are denied. Non-ADMIN updates may not change `patientId` (403): only an administrator can correct a record assigned to the wrong patient.
-- **Appointments:** enforced at the service layer by `AccessControlService`. A PATIENT is scoped to their own `patientId` and a DOCTOR to their own `doctorId` on create, list, get, history, reschedule, and cancel (a forced foreign identity returns 403); staff (ADMIN/NURSE/BILLING_STAFF/SUPPORT) have broad access. Confirm is available to any caller who can access the appointment; start/complete/no-show additionally require a clinical role (`ADMIN`, `DOCTOR`, `NURSE`). History uses the same access rules as the appointment itself.
+- **Appointments:** enforced at the service layer by `AccessControlService`. A PATIENT is scoped to their own `patientId` and a DOCTOR to their own `doctorId` on create, list, get, history, reschedule, and cancel (a forced foreign identity returns 403); staff (ADMIN/NURSE/BILLING_STAFF/SUPPORT) have broad read access. Mutation roles (`canMutate`) are ADMIN/DOCTOR/NURSE/PATIENT: BILLING_STAFF owns billing writes only and SUPPORT is operational read-only, so both can read an appointment and its history but every create/reschedule/confirm/cancel returns 403. Start/complete/no-show additionally require a clinical role (`ADMIN`, `DOCTOR`, `NURSE`). History uses the same access rules as the appointment itself.
 - **Medical-record audit history:** `GET /api/v1/medical-records/{recordId}/history` reuses the record read rules, so a patient sees only their own record history, a doctor only records they authored, and NURSE/BILLING_STAFF/SUPPORT receive 403.
 - **Invoices:** read access enforced at the service layer by `AccessControlService`. A PATIENT can only list/view/inspect payments on their own invoices (a forced foreign `patientId` on the list returns 403). Organisation-wide reads are limited to the explicit set ADMIN/BILLING_STAFF/DOCTOR/NURSE/SUPPORT; any other authenticated role is denied in both `canRead` and `scopedPatientId` rather than falling through. Invoice/payment writes remain ADMIN/BILLING_STAFF only (other roles receive 403 at the endpoint matcher).
 - **Notifications:** list/unread-count are scoped to `recipient_id == uid`; marking a notification read is owner-only (ADMIN bypass) and a foreign id returns 403/404 without leaking existence.
@@ -143,7 +188,7 @@ The JWT `uid` (Auth `User.id`) is compared to stored business ids.
 Admin/staff creation of Patient and Doctor profiles requires an explicit `userId` (Auth `User.id`); the profile services do **not** trust that value blindly.
 
 1. patient-service / doctor-service forward the caller's bearer token to auth-service's internal lookup `GET /internal/identities/{userId}` (outside `/api/v1`, `@Hidden` in OpenAPI, **no gateway route**).
-2. auth-service authorizes the lookup itself (`/internal/**` → `ADMIN`, `DOCTOR`, `NURSE`, `BILLING_STAFF`, `SUPPORT`). A `PATIENT` token receives 403, so the profile services cannot be used as an identity oracle by patients.
+2. auth-service authorizes the lookup itself (`/internal/**` → `ADMIN`, `DOCTOR` only since M9). A `PATIENT`, `NURSE`, `BILLING_STAFF` or `SUPPORT` token receives 403, so the profile services cannot be used as an identity oracle and operational roles cannot enumerate identities.
 3. The response contains only `userId`, `username`, `status`, `roles` - never password hashes or contact data.
 4. patient-service requires the identity to hold `PATIENT`; doctor-service requires `DOCTOR`; both require `status == ACTIVE`.
 5. Self-service creation skips the remote call: a PATIENT/DOCTOR creating their own profile is proven by the signed `uid` + role claims, and forcing a different `userId` returns 403.
@@ -174,6 +219,7 @@ Configuration: `services.auth-service-url` (`AUTH_SERVICE_URL`, default `http://
 - `RefreshConcurrencyIntegrationTest` fires two concurrent refreshes and asserts the row lock prevents two independent chains.
 - patient-service `CrossServiceTokenRevocationIntegrationTest` (real Redis) proves a revocation written by auth-service's contract is enforced by an independent service that validates JWTs locally: `jti`, `sid` and `uid` revocation, refresh tokens as bearer, invalid signature/malformed/missing tokens, and tokens issued after the revocation epoch.
 - Every other service keeps its RBAC integration tests (tokens minted with the service test secret) with `security.revocation.enabled=false`; revocation behaviour itself is not mocked away in the tests above.
+- **M9 authorization/onboarding tests:** `AccessControlServiceTest` (appointment) covers the mutation-role set and asserts BILLING_STAFF and SUPPORT can read but not mutate; `AppointmentControllerIntegrationTest.supportCannotMutateAppointments` and `billingStaffCannotMutateAppointments` prove 403 on create/reschedule/confirm/cancel with the read path still 200; billing `InvoiceControllerIntegrationTest.rolesOtherThanAdminAndBillingStaffCannotWriteInvoices` covers the wrong-role write paths and `InvoiceControllerSecurityTest.methodSecurityDeniesInvoiceCreationForANonBillingRole` calls the proxy directly to prove the annotation (not the URL matcher) denies it; the same direct-proxy check exists for patient/doctor profile creation and medical-record writes; `InternalIdentityControllerIntegrationTest` asserts 403 for PATIENT/NURSE/BILLING_STAFF/SUPPORT and 401 for a suspended caller; `AdminBootstrapRunnerTest` covers disabled, never-overwrites, weak-password, incomplete-config, duplicate-username and concurrent-win behaviour.
 
 ## 12. Remaining limitations
 
@@ -241,3 +287,178 @@ its 403 instead of degrading to a 401 (`ErrorDispatchSecurityTest`).
   generated values).
 - **Secret scanning.** A Gitleaks full-history scan (`--log-opts="--all"`) over all 21 commits reports no
   leaks; the only matches in the working tree are local, git-ignored files (`.env`, `target/surefire-reports`, `logs/`).
+
+## 16. Identity lifecycle, onboarding and request correlation (M9)
+
+### 16.1 Public registration (PATIENT only)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant G as api-gateway
+    participant A as auth-service
+    participant DB as mediflow_auth_db
+
+    B->>G: POST /api/v1/auth/register (username, email, password, fullName)
+    G->>A: forward + X-Correlation-ID
+    A->>A: validate request + PasswordPolicy
+    A->>DB: existsByUsername / existsByEmail
+    A->>DB: insert users (status=ACTIVE, created_by=self)
+    A->>DB: attach role PATIENT (hard-coded, request role ignored)
+    A->>DB: insert refresh token hash (family = new session)
+    A-->>B: 201 AuthResponse (access + refresh token)
+```
+
+There is no self-service privileged registration. The request DTO no longer accepts a role, and the
+service assigns `PATIENT` unconditionally, so a crafted body cannot escalate.
+
+### 16.2 Administrator provisioning (one-time bootstrap)
+
+```mermaid
+flowchart TD
+    S[auth-service starts] --> E{"BOOTSTRAP_ADMIN_ENABLED?"}
+    E -- no --> X[skip: no side effects]
+    E -- yes --> P{"seed profile active?"}
+    P -- yes --> X
+    P -- no --> Q{"any user holds ADMIN?"}
+    Q -- yes --> X2[skip: never overwrite an existing admin]
+    Q -- no --> V{"username, email, password present and valid?"}
+    V -- no --> F[fail fast: IllegalStateException, service does not start half-provisioned]
+    V -- yes --> C[create ACTIVE user with ADMIN role]
+    C --> AU[audit ADMIN_BOOTSTRAPPED]
+    AU --> R[operator signs in and disables BOOTSTRAP_ADMIN_ENABLED]
+```
+
+- Disabled by default (`auth.bootstrap.enabled` / `BOOTSTRAP_ADMIN_ENABLED=false`).
+- Runs only when **no** account holds `ADMIN`; it never promotes, resets or overwrites an existing user.
+- Password is validated with the same `PasswordPolicy` as every other account and is never logged.
+- Excluded from the `seed` profile so development seed accounts can never mix with production bootstrap.
+- The `ADMIN_BOOTSTRAPPED` audit event records the provisioning without the credential.
+
+### 16.3 Doctor / nurse / billing-staff onboarding
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Op as Operator (ADMIN)
+    participant U as New staff user
+    participant A as auth-service
+    participant D as doctor-service
+    participant P as patient-service
+
+    U->>A: POST /api/v1/auth/register (creates PATIENT account)
+    Op->>A: PATCH /api/v1/auth/users/{id}/roles (adds DOCTOR / NURSE / BILLING_STAFF)
+    A->>A: revoke all sessions of the target + audit ACCOUNT_ROLES_CHANGED
+    U->>A: POST /api/v1/auth/login (new token carries the new role)
+    alt Doctor self-service
+        U->>D: POST /api/v1/doctors (userId forced to own uid)
+    else Admin creates the profile
+        Op->>D: POST /api/v1/doctors with userId
+        D->>A: GET /internal/identities/{userId} (ADMIN/DOCTOR only)
+        A-->>D: id, username, status, roles
+    end
+    D-->>Op: 201 doctor profile
+    Note over Op,P: Nurse and billing staff need no profile row;<br/>they operate on clinical workflows and invoices.
+```
+
+Activation is the account status: only `ACTIVE` accounts can authenticate, and a status change
+revokes every session. Deactivation therefore takes effect on the next request, not only at token
+expiry.
+
+### 16.4 Login and JWT issuance
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant A as auth-service
+    participant R as Redis
+    participant DB as auth DB
+
+    B->>A: POST /api/v1/auth/login
+    A->>DB: load user (constant-time dummy hash for unknown users)
+    A->>A: check status, lockout, BCrypt password
+    A->>DB: create refresh family (sid) + SHA-256 token hash
+    A->>DB: audit LOGIN_SUCCEEDED
+    A-->>B: access (15m, type=access, roles) + refresh (7d, type=refresh, no roles)
+    B->>B: store tokens + access expiry
+    B->>A: GET /api/v1/auth/me (Bearer access)
+    A->>R: isRevoked(jti, uid, sid, iat)
+    A->>DB: reload user + roles (non-ACTIVE is rejected)
+    A-->>B: profile
+```
+
+### 16.5 Refresh, logout and revocation
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant A as auth-service
+    participant R as Redis
+
+    alt Proactive or 401-triggered refresh
+        B->>A: POST /api/v1/auth/refresh (single-flight + cross-tab lock)
+        A->>A: lock refresh row, verify hash, check family/expiry
+        A->>A: rotate: revoke presented token, issue new pair (same sid)
+        A-->>B: new access + refresh
+    else Logout
+        B->>A: POST /api/v1/auth/logout (Bearer + refresh token)
+        A->>R: revoke jti (remaining TTL) + sid marker
+        A->>A: revoke refresh family in DB
+        A-->>B: 200, client clears local session
+    end
+    Note over A,R: Role change, status change, password change/reset<br/>revoke every session and set a uid epoch.
+```
+
+The browser client keeps **one correlation id per logical request**, including the refresh that
+precedes a request and the retry after a `401`.
+
+### 16.6 Correlation-ID lifecycle
+
+```mermaid
+flowchart LR
+    B[Browser api()] -->|"generate UUID v4<br/>or caller-supplied id"| G{api-gateway}
+    G -->|"valid 8-64 [A-Za-z0-9._-]? keep : regenerate"| S1[downstream service]
+    G -->|"echo X-Correlation-ID"| B
+    S1 -->|MDC log context| L[service logs]
+    S1 -->|synchronous call| S2[internal dependency]
+    S1 -->|"event envelope correlationId"| K[Kafka topic]
+    K --> C[notification / analytics consumer]
+    S1 -->|"5xx response"| B2["ApiError.correlationId<br/>message + (reference: id)"]
+```
+
+- Correlation ids are **observability metadata, never credentials**; a forged id grants nothing.
+- The response header wins over the sent value, so a gateway-regenerated id is the one the user quotes.
+- Only `5xx` responses append `(reference: …)` to the message; `4xx` validation/authorization text stays clean.
+
+### 16.7 JWT review - findings and residual risk
+
+| Area | Current state | Verdict |
+|---|---|---|
+| Signing / verification | HS256, shared `JWT_SECRET`, provider rejects keys < 256 bits, no default | Sound for a single trust domain |
+| Algorithm enforcement | JJWT `verifyWith` pins the key; no `alg=none`/RS→HS confusion path | OK |
+| Issuer / audience | Not asserted on user tokens; service tokens assert exact `iss`/`aud` | Acceptable now; add `iss`/`aud` when a second issuer appears |
+| Expiry | Access 15 min, refresh 7 days, both validated | OK |
+| Token type | `type=access`/`type=refresh`; refresh rejected as bearer everywhere | OK |
+| Refresh rotation / reuse | Pessimistic row lock, SHA-256 hashes, family revocation, 10 s reuse grace | OK |
+| Revocation | Redis `jti`/`sid`/`uid` markers, fail-closed, auth-service also checks account status | OK (see persistence gap) |
+| Role-change invalidation | All sessions revoked + `uid` epoch; resource services re-read roles only from the token | OK because revocation precedes reuse |
+| Service credential | Derived 30 s HMAC service JWT, exact issuer/audience/scope, separate derived key | OK |
+| Secret distribution | One shared secret in `.env`/`.env.prod`; no KMS/vault | Accepted single-VM limitation |
+| Shared-HS256 risk | Any service holding `JWT_SECRET` can mint tokens for every other service | **Main residual risk** |
+
+**Recommendation (not implemented):** migrate to asymmetric signing (RS256/ES256, or EdDSA) with
+auth-service as the only holder of the private key and every other service configured with the public
+key/JWKS. Because access tokens are short-lived, a controlled migration is possible without a flag day:
+
+1. Publish a `kid` and JWKS endpoint from auth-service; keep HS256 verification enabled temporarily.
+2. Switch issuance to RS256 with a `kid`, leaving the HS256 key accepted for verification only.
+3. Deploy consumers with public-key verification, then remove HS256 acceptance after the refresh
+   lifetime (7 days) plus skew.
+4. Never rotate `JWT_SECRET`/keys abruptly: that invalidates every live session. Rotate after the
+   longest refresh lifetime, or accept a planned re-login window.
+
+The service credential (`mediflow.internal-service-token.v1` derivation) should be split onto its own
+secret at the same time, so a compromised consumer cannot derive it.

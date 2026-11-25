@@ -18,6 +18,28 @@ const REFRESH_LOCK_POLL_MS = 120;
 
 const TAB_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
+/**
+ * Header used end-to-end for request correlation. The gateway validates/regenerates the value and
+ * echoes it, so a browser request, the synchronous service calls it triggers and the resulting
+ * Kafka events can all be traced with one id. It is an observability aid, never a credential.
+ */
+export const CORRELATION_ID_HEADER = 'X-Correlation-ID';
+
+/**
+ * Creates the id for one logical request. `crypto.randomUUID()` is available in secure contexts
+ * (including localhost); the fallback keeps non-secure development hosts working.
+ */
+export function newCorrelationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = char === 'x' ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
+}
+
 /** Reasons the client-side session may end; surfaced to the user on the login screen. */
 export type SessionEndReason = 'expired' | 'signed-out';
 
@@ -91,6 +113,11 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   /** Set to false for public endpoints (login, register, password reset). */
   auth?: boolean;
+  /**
+   * Correlation id for this logical request. Callers normally omit it; the client generates one.
+   * Supplying it lets a retry deliberately reuse the id of the request it repeats.
+   */
+  correlationId?: string;
 }
 
 let refreshPromise: Promise<string | null> | null = null;
@@ -100,7 +127,7 @@ let refreshPromise: Promise<string | null> | null = null;
  * tabs never rotate the same refresh token concurrently, which the server treats as token
  * theft. A tab that loses the race simply adopts the tokens written by the winner.
  */
-async function refreshAccessToken(): Promise<string | null> {
+async function refreshAccessToken(correlationId?: string): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = (async () => {
@@ -118,9 +145,11 @@ async function refreshAccessToken(): Promise<string | null> {
       if (!refreshToken) return null;
 
       try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (correlationId) headers[CORRELATION_ID_HEADER] = correlationId;
         const res = await fetch(`${BASE_URL}/api/v1/auth/refresh`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ refreshToken }),
         });
         if (!res.ok) {
@@ -210,9 +239,17 @@ function buildUrl(path: string, params?: RequestOptions['params']): string {
   return url.toString();
 }
 
-async function performRequest(path: string, options: RequestOptions): Promise<Response> {
+async function performRequest(
+  path: string,
+  options: RequestOptions,
+  correlationId: string,
+): Promise<Response> {
   const headers: Record<string, string> = { ...(options.headers ?? {}) };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+  // Never overwrite an explicitly supplied id: it belongs to the caller's logical request.
+  if (!Object.keys(headers).some((name) => name.toLowerCase() === CORRELATION_ID_HEADER.toLowerCase())) {
+    headers[CORRELATION_ID_HEADER] = correlationId;
+  }
   const token = getAccessToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
   return fetch(buildUrl(path, options.params), {
@@ -222,7 +259,7 @@ async function performRequest(path: string, options: RequestOptions): Promise<Re
   });
 }
 
-async function handleResponse<T>(res: Response): Promise<T> {
+async function handleResponse<T>(res: Response, correlationId: string): Promise<T> {
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   let envelope: ApiEnvelope<T> | null = null;
@@ -235,25 +272,34 @@ async function handleResponse<T>(res: Response): Promise<T> {
     if (res.status === 401) {
       endSession();
     }
-    throw new ApiError(envelope?.message ?? 'Request failed', res.status, envelope?.errors);
+    // The gateway echoes the accepted id; a direct service call may not. Prefer the server value.
+    const serverCorrelationId = res.headers.get(CORRELATION_ID_HEADER) ?? correlationId;
+    const baseMessage = envelope?.message ?? 'Request failed';
+    // Only server faults get a user-visible reference: validation/authorization messages stay clean.
+    const message = res.status >= 500 && serverCorrelationId
+      ? `${baseMessage} (reference: ${serverCorrelationId})`
+      : baseMessage;
+    throw new ApiError(message, res.status, envelope?.errors, serverCorrelationId);
   }
   return envelope?.data as T;
 }
 
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const authenticated = options.auth !== false;
+  // One id per logical request: the proactive refresh, the request and its 401 retry share it.
+  const correlationId = options.correlationId ?? newCorrelationId();
 
   // Proactive refresh keeps long-lived tabs working and makes reload-with-expired-token work.
   if (authenticated && shouldRefreshAccessToken()) {
-    await refreshAccessToken();
+    await refreshAccessToken(correlationId);
   }
 
-  let res = await performRequest(path, options);
+  let res = await performRequest(path, options, correlationId);
 
   if (res.status === 401 && authenticated && getRefreshToken()) {
-    const newToken = await refreshAccessToken();
-    if (newToken) res = await performRequest(path, options);
+    const newToken = await refreshAccessToken(correlationId);
+    if (newToken) res = await performRequest(path, options, correlationId);
   }
 
-  return handleResponse<T>(res);
+  return handleResponse<T>(res, correlationId);
 }

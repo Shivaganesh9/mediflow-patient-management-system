@@ -1,18 +1,23 @@
 package com.mediflow.medicalrecord.controller;
 
 import com.mediflow.medicalrecord.AbstractMedicalRecordIntegrationTest;
+import com.mediflow.medicalrecord.dto.CreateMedicalRecordRequest;
 import com.mediflow.medicalrecord.event.MedicalRecordEventPublisher;
+import com.mediflow.medicalrecord.service.MedicalRecordService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -24,6 +29,9 @@ class MedicalRecordControllerSecurityTest extends AbstractMedicalRecordIntegrati
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private MedicalRecordService medicalRecordService;
 
     @MockBean
     private MedicalRecordEventPublisher eventPublisher;
@@ -65,6 +73,18 @@ class MedicalRecordControllerSecurityTest extends AbstractMedicalRecordIntegrati
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"notes\":\"Updated\"}"))
                 .andExpect(status().isForbidden());
+    }
+
+    /**
+     * Calls the Spring-managed proxy directly, so the result cannot come from the URL matcher:
+     * the {@code @PreAuthorize} on the service method must deny a role that is not allowed to
+     * write clinical records.
+     */
+    @Test
+    @WithMockUser(roles = "NURSE")
+    void methodSecurityDeniesMedicalRecordCreationForANonClinicalWriter() {
+        assertThatThrownBy(() -> medicalRecordService.createMedicalRecord(new CreateMedicalRecordRequest()))
+                .isInstanceOf(AccessDeniedException.class);
     }
 
     private String recordPayload() {

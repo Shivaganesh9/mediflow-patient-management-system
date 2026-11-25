@@ -17,6 +17,7 @@ public final class AuthEventTypes {
     public static final String PASSWORD_RESET_COMPLETED = "PASSWORD_RESET_COMPLETED";
     public static final String ACCOUNT_STATUS_CHANGED = "ACCOUNT_STATUS_CHANGED";
     public static final String ACCOUNT_ROLES_CHANGED = "ACCOUNT_ROLES_CHANGED";
+    public static final String ADMIN_BOOTSTRAPPED = "ADMIN_BOOTSTRAPPED";
 
     private AuthEventTypes() {
     }

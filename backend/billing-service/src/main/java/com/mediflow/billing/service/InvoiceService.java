@@ -20,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -53,6 +54,7 @@ public class InvoiceService {
     private final AccessControlService accessControl;
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','BILLING_STAFF')")
     public Invoice createInvoice(CreateInvoiceRequest request) {
         // One active invoice per appointment: two staff members generating an invoice for the same
         // visit must not both succeed (that path bills the patient twice). The partial unique index
@@ -116,6 +118,7 @@ public class InvoiceService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','BILLING_STAFF')")
     public Invoice updateInvoice(UUID invoiceId, UpdateInvoiceRequest request) {
         Invoice invoice = invoiceRepository.findByInvoiceIdForUpdate(invoiceId)
                 .orElseThrow(() -> new ResourceNotFoundException("Invoice not found with id: " + invoiceId));
@@ -150,6 +153,7 @@ public class InvoiceService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','BILLING_STAFF')")
     public Invoice cancelInvoice(UUID invoiceId) {
         Invoice invoice = invoiceRepository.findByInvoiceIdForUpdate(invoiceId)
                 .orElseThrow(() -> new ResourceNotFoundException("Invoice not found with id: " + invoiceId));
@@ -178,6 +182,7 @@ public class InvoiceService {
      * original invoice-only signature for existing callers.</p>
      */
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','BILLING_STAFF')")
     public PaymentReceipt applyPayment(UUID invoiceId, RecordPaymentRequest request) {
         Invoice invoice = invoiceRepository.findByInvoiceIdForUpdate(invoiceId)
                 .orElseThrow(() -> new ResourceNotFoundException("Invoice not found with id: " + invoiceId));
@@ -212,11 +217,13 @@ public class InvoiceService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','BILLING_STAFF')")
     public Invoice recordPayment(UUID invoiceId, RecordPaymentRequest request) {
         return applyPayment(invoiceId, request).invoice();
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','BILLING_STAFF')")
     public Invoice refundPayment(UUID paymentId) {
         Payment payment = paymentRepository.findByPaymentIdForUpdate(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payment not found with id: " + paymentId));

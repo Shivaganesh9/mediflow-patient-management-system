@@ -25,4 +25,11 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select u from User u where u.id = :id")
     Optional<User> findByIdForUpdate(@Param("id") UUID id);
+
+    /**
+     * Whether any account currently holds the given role. Used by the one-time administrator
+     * bootstrap to prove it will not overwrite an existing administrator.
+     */
+    @Query("select count(u) > 0 from User u join u.roles r where r.name = :roleName")
+    boolean existsByRoleName(@Param("roleName") String roleName);
 }

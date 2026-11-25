@@ -11,6 +11,7 @@ import com.mediflow.auth.repository.UserRepository;
 import com.mediflow.common.enums.AccountStatus;
 import com.mediflow.common.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +42,7 @@ public class AccountLifecycleService {
     private final AuthAuditService auditService;
 
     @Transactional(readOnly = true)
+    @PreAuthorize("hasRole('ADMIN')")
     public List<UserProfileResponse> listUsers() {
         return userRepository.findAll().stream()
                 .sorted(Comparator.comparing(User::getUsername))
@@ -49,11 +51,13 @@ public class AccountLifecycleService {
     }
 
     @Transactional(readOnly = true)
+    @PreAuthorize("hasRole('ADMIN')")
     public UserProfileResponse getUser(UUID userId) {
         return toProfile(load(userId));
     }
 
     @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
     public UserProfileResponse updateStatus(UUID actorId, UUID targetId, UpdateAccountStatusRequest request) {
         AccountStatus target = request.getStatus();
         if (target == AccountStatus.LOCKED || target == AccountStatus.DELETED) {
@@ -81,6 +85,7 @@ public class AccountLifecycleService {
     }
 
     @Transactional
+    @PreAuthorize("hasRole('ADMIN')")
     public UserProfileResponse updateRoles(UUID actorId, UUID targetId, Set<String> requestedRoles) {
         Set<Role> roles = new HashSet<>();
         for (String name : requestedRoles) {

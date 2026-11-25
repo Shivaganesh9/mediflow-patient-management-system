@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +30,7 @@ public class DoctorService {
     private final IdentityVerifier identityVerifier;
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public Doctor createDoctor(CreateDoctorRequest request) {
         if (doctorRepository.existsByEmail(request.getEmail())) {
             throw new IllegalArgumentException("A doctor with this email already exists");
@@ -59,6 +61,7 @@ public class DoctorService {
     }
 
     @Transactional
+    @PreAuthorize("hasAnyRole('ADMIN','DOCTOR')")
     public Doctor updateDoctor(UUID doctorId, CreateDoctorRequest request) {
         Doctor doctor = getDoctor(doctorId);
         if (doctorRepository.existsByEmailAndDoctorIdNot(request.getEmail(), doctorId)) {

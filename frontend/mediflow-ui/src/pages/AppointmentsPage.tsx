@@ -31,7 +31,9 @@ export function AppointmentsPage() {
 
   const isPatient = roles.includes('PATIENT');
   const isDoctor = roles.includes('DOCTOR');
-  const isStaff = hasRole('ADMIN', 'NURSE', 'BILLING_STAFF', 'SUPPORT');
+  // Mirrors the appointment-service mutation roles: BILLING_STAFF and SUPPORT keep read-only
+  // visibility, so the UI never offers a button the API would reject with 403.
+  const canMutate = hasRole('ADMIN', 'DOCTOR', 'NURSE', 'PATIENT');
   const canClinical = hasRole('ADMIN', 'DOCTOR', 'NURSE');
 
   const scope = useMemo(
@@ -74,8 +76,6 @@ export function AppointmentsPage() {
   const doctorName = (id: string) => doctorNames.data?.find((d) => d.doctorId === id)?.name ?? shortId(id);
   const patientName = (id: string) => patientNames.data?.find((p) => p.patientId === id)?.name ?? shortId(id);
 
-  const canCreate = isPatient || isDoctor || isStaff;
-
   return (
     <div className="page-stack">
       <section className="hero-card">
@@ -84,7 +84,7 @@ export function AppointmentsPage() {
           <h2>Coordinate every visit with confidence.</h2>
           <p>Track upcoming consultations, follow-ups, and cancellations in one view.</p>
         </div>
-        {canCreate ? (
+        {canMutate ? (
           <button className="primary-btn" type="button" onClick={() => setShowCreate(true)}>
             Schedule visit
           </button>
@@ -158,6 +158,7 @@ export function AppointmentsPage() {
                     appointment={appointment}
                     patientName={patientName(appointment.patientId)}
                     doctorName={doctorName(appointment.doctorId)}
+                    canMutate={canMutate}
                     canClinical={canClinical}
                     onChanged={() => list.reload()}
                   />
@@ -177,7 +178,7 @@ export function AppointmentsPage() {
         )}
       </section>
 
-      {showCreate && canCreate ? (
+      {showCreate && canMutate ? (
         <CreateAppointmentModal
           isPatient={isPatient}
           isDoctor={isDoctor}
@@ -198,12 +199,14 @@ function AppointmentRow({
   appointment,
   patientName,
   doctorName,
+  canMutate,
   canClinical,
   onChanged,
 }: {
   appointment: Appointment;
   patientName: string;
   doctorName: string;
+  canMutate: boolean;
   canClinical: boolean;
   onChanged: () => void;
 }) {
@@ -247,7 +250,7 @@ function AppointmentRow({
           <StatusPill status={appointment.status} />
         </td>
         <td className="row-actions">
-          {appointment.status === 'SCHEDULED' ? (
+          {canMutate && appointment.status === 'SCHEDULED' ? (
             <button
               className="btn small-btn"
               type="button"
@@ -306,12 +309,12 @@ function AppointmentRow({
           <button className="btn small-btn" type="button" onClick={() => setShowingHistory(true)}>
             History
           </button>
-          {mutable ? (
+          {canMutate && mutable ? (
             <button className="btn small-btn" type="button" disabled={busy} onClick={() => setRescheduling(true)}>
               Reschedule
             </button>
           ) : null}
-          {mutable ? (
+          {canMutate && mutable ? (
             <button className="btn small-btn" type="button" disabled={busy} onClick={() => void handleCancel()}>
               {pendingAction === 'cancel' ? '…' : 'Cancel'}
             </button>

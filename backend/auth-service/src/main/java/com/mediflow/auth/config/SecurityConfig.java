@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -26,6 +27,7 @@ import org.springframework.http.HttpStatus;
 
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
 
@@ -52,8 +54,10 @@ public class SecurityConfig {
                         // Administrative identity lifecycle (status, roles, user directory).
                         .requestMatchers("/api/v1/auth/users/**").hasRole("ADMIN")
                         // Service-to-service identity lookup: never public, and only reachable by
-                        // non-patient callers (patient-service/doctor-service forward a staff token).
-                        .requestMatchers("/internal/**").hasAnyRole("ADMIN", "DOCTOR", "NURSE", "BILLING_STAFF", "SUPPORT")
+                        // the two roles that may create patient/doctor profiles (patient-service
+                        // and doctor-service forward the caller's token). SUPPORT, NURSE and
+                        // BILLING_STAFF have no profile-provisioning duty and are denied.
+                        .requestMatchers("/internal/**").hasAnyRole("ADMIN", "DOCTOR")
                         .anyRequest().authenticated())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authenticationProvider(authenticationProvider())

@@ -39,7 +39,7 @@ Every change is audited in `auth_audit_events` and takes effect immediately in a
 
 | Method & Path | Auth | Description |
 |---|---|---|
-| GET `/internal/identities/{userId}` | `ADMIN`, `DOCTOR`, `NURSE`, `BILLING_STAFF`, `SUPPORT` | Service-to-service lookup used by patient/doctor services to validate profile `userId` references. Returns `data: { userId, username, status, roles }`; 404 when unknown. |
+| GET `/internal/identities/{userId}` | `ADMIN`, `DOCTOR` | Service-to-service lookup used by patient/doctor services to validate profile `userId` references. Returns `data: { userId, username, status, roles }`; 404 when unknown. |
 
 Outside `/api/v1`, hidden from OpenAPI (`@Hidden`), not routed by the gateway, and never callable with a `PATIENT` token (403). The response intentionally omits email, phone and credentials. Failures propagate to the caller's profile-creation request as 400/403/409/503 (see `docs/security.md` §6).
 
@@ -90,22 +90,23 @@ correlation id, and **fails closed** (503) when the schedule cannot be checked.
 
 | Method & Path | Auth | Description |
 |---|---|---|
-| POST `` | authenticated (scoped; staff broad) | Create (status SCHEDULED); PATIENT forced to own patientId, DOCTOR to own doctorId, staff any. 400 if `endTime <= startTime` or the start is in the past; **409** when the slot is outside the doctor's active working hours or overlaps approved leave; **503** when the doctor's schedule cannot be verified. **409** if the patient or doctor already has an overlapping appointment (also enforced by a PostgreSQL exclusion constraint, so a concurrent booking cannot slip through) |
+| POST `` | ADMIN/DOCTOR/NURSE/PATIENT (scoped) | Create (status SCHEDULED); PATIENT forced to own patientId, DOCTOR to own doctorId, staff any. BILLING_STAFF/SUPPORT are read-only (403). 400 if `endTime <= startTime` or the start is in the past; **409** when the slot is outside the doctor's active working hours or overlaps approved leave; **503** when the doctor's schedule cannot be verified. **409** if the patient or doctor already has an overlapping appointment (also enforced by a PostgreSQL exclusion constraint, so a concurrent booking cannot slip through) |
 | GET `` | authenticated (scoped; staff broad) | Filter `status`, `patientId`, `doctorId`, `fromTime`, `toTime`, pageable; PATIENT/DOCTOR forced to own identity; unknown roles → 403 |
 | GET `/{appointmentId}` | authenticated (ownership) | Get by business id; PATIENT/DOCTOR only own (403 otherwise), staff any; 404 if missing |
 | GET `/{appointmentId}/history` | authenticated (ownership) | Append-only audit trail (`CREATED`, `RESCHEDULED`, `CONFIRMED`, `STARTED`, `COMPLETED`, `CANCELLED`, `NO_SHOW`) with actor, from/to status and timestamps; same access rules as the appointment |
-| PUT `/{appointmentId}` | authenticated (ownership) | Reschedule; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED (**409** otherwise); slot revalidated against working hours/leave (**409**, **503**); overlap checked excluding self (**409** on conflict, DB-enforced) |
-| PATCH `/{appointmentId}/confirm` | authenticated (ownership) | `SCHEDULED → CONFIRMED`; any caller who can access the appointment; **409** for any other status |
+| PUT `/{appointmentId}` | ADMIN/DOCTOR/NURSE/PATIENT (ownership) | Reschedule; PATIENT/DOCTOR only own (403 otherwise); BILLING_STAFF/SUPPORT 403; only when status SCHEDULED/CONFIRMED (**409** otherwise); slot revalidated against working hours/leave (**409**, **503**); overlap checked excluding self (**409** on conflict, DB-enforced) |
+| PATCH `/{appointmentId}/confirm` | ADMIN/DOCTOR/NURSE/PATIENT (ownership) | `SCHEDULED → CONFIRMED`; the owning PATIENT or a scheduling role; BILLING_STAFF/SUPPORT 403; **409** for any other status |
 | PATCH `/{appointmentId}/start` | ADMIN/DOCTOR/NURSE + ownership | `CONFIRMED → IN_PROGRESS`; **409** for any other status; 403 for non-clinical roles |
 | PATCH `/{appointmentId}/complete` | ADMIN/DOCTOR/NURSE + ownership | `IN_PROGRESS → COMPLETED`; **409** for any other status; 403 for non-clinical roles |
 | PATCH `/{appointmentId}/no-show` | ADMIN/DOCTOR/NURSE + ownership | `SCHEDULED`/`CONFIRMED → NO_SHOW`; **409** for any other status; 403 for non-clinical roles |
-| PATCH `/{appointmentId}/cancel` | authenticated (ownership) | Cancel; PATIENT/DOCTOR only own (403 otherwise); only when status SCHEDULED/CONFIRMED (**409** otherwise) |
+| PATCH `/{appointmentId}/cancel` | ADMIN/DOCTOR/NURSE/PATIENT (ownership) | Cancel; PATIENT/DOCTOR only own (403 otherwise); BILLING_STAFF/SUPPORT 403; only when status SCHEDULED/CONFIRMED (**409** otherwise) |
 
 ### 5.1 Appointment lifecycle
 
 `SCHEDULED → CONFIRMED → IN_PROGRESS → COMPLETED`, with `SCHEDULED`/`CONFIRMED → CANCELLED` or
-`NO_SHOW`. Confirm is open to anyone who can access the appointment; start/complete/no-show require a
-clinical role (ADMIN, DOCTOR, NURSE). Repeating a transition in the current status is a **409** (there
+`NO_SHOW`. Confirm is open to the owning PATIENT and the scheduling roles (ADMIN, DOCTOR, NURSE);
+BILLING_STAFF and SUPPORT are read-only. Start/complete/no-show require a clinical role (ADMIN, DOCTOR,
+NURSE). Repeating a transition in the current status is a **409** (there
 are no idempotent no-ops). Every transition writes an `appointment_history` row in the same transaction
 and publishes the existing `appointment.updated.v1` / `appointment.cancelled.v1` event — no new Kafka
 topics were added. `RESCHEDULED` history is recorded only when the slot actually changes.

@@ -323,6 +323,82 @@ class AppointmentControllerIntegrationTest {
                 .andExpect(status().isOk());
     }
 
+    /**
+     * SUPPORT keeps read-only visibility (see {@link #billingStaffAndSupportCanReadAnyAppointment})
+     * but must not be able to change appointment state.
+     */
+    @Test
+    void supportCannotMutateAppointments() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String appointmentId = createAppointment(patientId, doctorId, "2030-04-01T10:00:00", "2030-04-01T11:00:00");
+        String supportToken = token("support1", UUID.randomUUID(), List.of("SUPPORT"));
+
+        mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + supportToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(appointmentPayload(UUID.randomUUID(), doctorId,
+                                "2030-04-01T12:00:00", "2030-04-01T13:00:00")))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/v1/appointments/{id}", appointmentId)
+                        .header("Authorization", "Bearer " + supportToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"startTime\":\"2030-04-01T14:00:00\",\"endTime\":\"2030-04-01T15:00:00\"}"))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(patch("/api/v1/appointments/{id}/confirm", appointmentId)
+                        .header("Authorization", "Bearer " + supportToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(patch("/api/v1/appointments/{id}/cancel", appointmentId)
+                        .header("Authorization", "Bearer " + supportToken))
+                .andExpect(status().isForbidden());
+
+        // The read path stays available, and the appointment is untouched.
+        mockMvc.perform(get("/api/v1/appointments/{id}", appointmentId)
+                        .header("Authorization", "Bearer " + supportToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SCHEDULED"));
+    }
+
+    /**
+     * BILLING_STAFF owns billing writes only. It keeps broad appointment reads (see
+     * {@link #billingStaffAndSupportCanReadAnyAppointment}) but every scheduling mutation is 403.
+     */
+    @Test
+    void billingStaffCannotMutateAppointments() throws Exception {
+        UUID patientId = UUID.randomUUID();
+        String appointmentId = createAppointment(patientId, doctorId, "2030-04-02T10:00:00", "2030-04-02T11:00:00");
+        String billingToken = token("billing1", UUID.randomUUID(), List.of("BILLING_STAFF"));
+
+        mockMvc.perform(post("/api/v1/appointments")
+                        .header("Authorization", "Bearer " + billingToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(appointmentPayload(UUID.randomUUID(), doctorId,
+                                "2030-04-02T12:00:00", "2030-04-02T13:00:00")))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/v1/appointments/{id}", appointmentId)
+                        .header("Authorization", "Bearer " + billingToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"startTime\":\"2030-04-02T14:00:00\",\"endTime\":\"2030-04-02T15:00:00\"}"))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(patch("/api/v1/appointments/{id}/confirm", appointmentId)
+                        .header("Authorization", "Bearer " + billingToken))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(patch("/api/v1/appointments/{id}/cancel", appointmentId)
+                        .header("Authorization", "Bearer " + billingToken))
+                .andExpect(status().isForbidden());
+
+        // The read path stays available, and the appointment is untouched.
+        mockMvc.perform(get("/api/v1/appointments/{id}", appointmentId)
+                        .header("Authorization", "Bearer " + billingToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SCHEDULED"));
+    }
+
     @Test
     void unknownAndLegacyRolesAreForbidden() throws Exception {
         String appointmentId = createAppointment(UUID.randomUUID(), UUID.randomUUID(), adminToken());

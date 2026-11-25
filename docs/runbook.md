@@ -879,7 +879,7 @@ Pre-V7 appointments have no `CREATED` history row; that is expected and not back
 Full details and the requirement → suite map are in `docs/testing.md`. Quick reference:
 
 ```powershell
-# Browser workflows (mocked API, real React app) - 6 specs, 43 tests (38 mocked-API + 5 demo)
+# Browser workflows (mocked API, real React app) - 7 specs, 49 tests (44 mocked-API + 5 demo)
 cd frontend/mediflow-ui
 npm run typecheck:e2e
 npm run test:e2e
@@ -955,7 +955,7 @@ degrade to 401 again.
 .\scripts\run-service.ps1 -Service appointment-service -Profiles dev,seed
 .\scripts\run-service.ps1 -Service api-gateway -SkipInfra
 
-# Lightweight gate: build, typecheck, 43 Playwright tests, 31 static checks
+# Lightweight gate: build, typecheck, 49 Playwright tests, 31 static checks
 .\scripts\test-light.ps1
 
 # Stop infrastructure (volumes kept) or wipe local data

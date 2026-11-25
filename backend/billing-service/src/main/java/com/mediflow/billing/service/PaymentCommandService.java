@@ -10,6 +10,7 @@ import com.mediflow.common.exception.ConflictException;
 import com.mediflow.common.exception.ResourceNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -80,6 +81,7 @@ public class PaymentCommandService {
      * @param idempotencyKey raw {@code Idempotency-Key} header, or {@code null} for a non-idempotent
      *                       legacy call
      */
+    @PreAuthorize("hasAnyRole('ADMIN','BILLING_STAFF')")
     public PaymentResult recordPayment(UUID invoiceId, RecordPaymentRequest request, String idempotencyKey) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             return new PaymentResult(invoiceService.recordPayment(invoiceId, request), false);

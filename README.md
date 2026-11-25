@@ -135,7 +135,7 @@ a production build. See [docs/demo-mode.md](docs/demo-mode.md).
 
 | Layer | Command |
 |---|---|
-| Lightweight (build + 43 Playwright tests + 31 static checks) | `.\scripts\test-light.ps1` |
+| Lightweight (build + 49 Playwright tests + 31 static checks) | `.\scripts\test-light.ps1` |
 | Integration / Testcontainers | `mvn -B -ntp -U clean verify` |
 | Cross-service E2E (core/full) | `node testing/e2e/run-e2e.mjs --profile=full --build` |
 | Release validation | `node testing/release/check-release-readiness.mjs` / `node testing/release/smoke.mjs --build` |
