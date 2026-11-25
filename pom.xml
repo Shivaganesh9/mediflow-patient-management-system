@@ -1,4 +1,4 @@
-﻿<project xmlns="http://maven.apache.org/POM/4.0.0"
+<project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
@@ -30,18 +30,18 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spring-boot.version>3.5.0</spring-boot.version>
     <spring-cloud.version>2025.0.0</spring-cloud.version>
-    <lombok.version>1.18.32</lombok.version>
-    <mapstruct.version>1.5.5.Final</mapstruct.version>
-    <postgresql.version>42.7.3</postgresql.version>
+    <lombok.version>1.18.48</lombok.version>
+    <mapstruct.version>1.6.3</mapstruct.version>
+    <postgresql.version>42.7.14</postgresql.version>
     <jackson.version>2.17.2</jackson.version>
-    <jjwt.version>0.12.6</jjwt.version>
+    <jjwt.version>0.13.0</jjwt.version>
     <springdoc.version>2.8.0</springdoc.version>
-    <testcontainers.version>1.20.0</testcontainers.version>
+    <testcontainers.version>1.21.4</testcontainers.version>
     <!-- Surefire/Failsafe 3.5.x aligns with the JUnit Platform shipped by
          Spring Boot 3.5 and avoids the 3.2.5 provider resolution problem that
          broke CI (surefire-junit-platform:3.2.5 could not be resolved from a
          restored ~/.m2 cache). -->
-    <surefire.version>3.5.6</surefire.version>
+    <surefire.version>3.6.1</surefire.version>
   </properties>
 
   <dependencyManagement>
@@ -91,7 +91,7 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
-          <version>3.13.0</version>
+          <version>3.16.0</version>
           <configuration>
             <release>${java.version}</release>
             <parameters>true</parameters>
