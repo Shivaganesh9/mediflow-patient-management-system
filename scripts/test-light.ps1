@@ -9,7 +9,7 @@
   Testcontainers are required.
 
   This is NOT a substitute for `mvn -B -ntp verify` or the cross-service E2E suite; both run in
-  GitHub Actions. See docs/testing.md for the full matrix.
+  GitHub Actions. See .github/workflows/ci.yml for the full matrix.
 
 .EXAMPLE
   .\scripts\test-light.ps1

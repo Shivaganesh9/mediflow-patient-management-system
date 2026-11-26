@@ -6,32 +6,9 @@ It covers identity and RBAC, patient and doctor directories, appointment schedul
 working-hours/leave enforcement, clinical records with audit history, invoicing and idempotent
 payments, Kafka-driven notifications, and an event-driven analytics read model.
 
-> **Status:** Milestones 1–8 delivered. This is a reference/demo platform — it is **not approved for
-> real patient data**. Use synthetic data only. Start with the
-> **[project guide](docs/PROJECT_GUIDE.md)**.
-
-## Implemented capabilities
-
-- **Identity and access** — registration, login, HS256 JWT access tokens, rotating refresh tokens,
-  logout, password change/reset, admin user/status/role management, account lockout, shared Redis
-  revocation, RBAC and resource ownership.
-- **Patients and doctors** — profiles and search, availability windows, leave periods, soft
-  deactivate/cancel, identity validation against auth-service.
-- **Appointments** — booking, reschedule, cancel, lifecycle (`SCHEDULED → CONFIRMED → IN_PROGRESS →
-  COMPLETED`, plus `CANCELLED`/`NO_SHOW`), PostgreSQL exclusion constraints against double-booking,
-  append-only history, working-hours/leave validation against doctor-service.
-- **Medical records** — encounter records, fine-grained access, metadata-only audit history.
-- **Billing** — invoices with line items/tax/discount, one active invoice per appointment, payments
-  and refunds, `Idempotency-Key` replay protection.
-- **Notifications and analytics** — Kafka consumers with retry/DLQ and idempotency; analytics fact
-  tables plus dashboard, appointment, revenue, doctor-ranking and patient-activity APIs.
-- **Frontend** — fully integrated SPA with JWT refresh, role-based routing and 12 pages wired to
-  `/api/v1/**` through the gateway.
-- **Frontend demo mode** — the real UI with synthetic in-browser data; no backend or Docker.
-
-`lab-service` (8090) and `pharmacy-service` are unimplemented scaffolds with no Java sources.
-`service-registry` and `config-server` are README-only placeholders; no discovery server is deployed
-and services use direct URLs.
+> **Status:** reference/demo platform — **not approved for real patient data**. Use synthetic data
+> only. This repository contains the application code, tests, migrations, deployment files and CI;
+> detailed architecture and operations documentation is maintained separately.
 
 ## Architecture
 
@@ -57,14 +34,13 @@ Browser ──► React SPA (:3000 dev / nginx :443 prod)
 
 Key properties:
 
-- Each service owns its schema and validates JWTs locally (no per-request call to auth-service).
-- Business writes in appointment/billing/medical-record commit through a **transactional outbox**;
-  an in-process scheduled relay publishes to Kafka with bounded retries. Consumers are idempotent
-  with retry + DLQ.
+- Each service owns its schema and validates JWTs locally; Redis carries shared revocation markers.
+- Appointment, billing and medical-record writes use a **transactional outbox**; a scheduled relay
+  publishes to Kafka with bounded retries, and consumers are idempotent with retry + DLQ.
 - PostgreSQL is the final authority for double-booking (exclusion constraints), one active invoice
   per appointment, and payment idempotency.
-- Appointment booking calls doctor-service's internal schedule validation with a derived service
-  credential and **fails closed (503)** if working hours/leave cannot be verified.
+- Appointment booking calls doctor-service's internal schedule validation and **fails closed (503)**
+  if working hours or leave cannot be verified.
 
 ### Services and ports
 
@@ -79,6 +55,9 @@ Key properties:
 | `analytics-service` | 8088 | Kafka-fed read model + reporting APIs |
 | `notification-service` | 8089 | Kafka-fed in-app notifications |
 | `medical-record-service` | 8091 | Clinical records + metadata-only audit history |
+
+`lab-service` (8090) and `pharmacy-service` are build-only scaffolds with no Java sources.
+No service registry or config server is deployed; the gateway uses static routes.
 
 ## Technology stack
 
@@ -116,9 +95,7 @@ npm run dev          # http://localhost:3000
 
 Seed accounts (`-Profiles dev,seed`): `admin/Admin@123`, `doctor/Doctor@123`,
 `patient/Patient@123`, `nurse/Nurse@123`, `billing/Billing@123`, `support/Support@123`.
-Local synthetic use only.
-
-Windows-specific notes and troubleshooting: [docs/getting-started.md](docs/getting-started.md).
+Synthetic local use only.
 
 ### No-backend demo
 
@@ -129,7 +106,7 @@ Explore the real UI with synthetic data — no Java, no Docker:
 ```
 
 Sign in from the demo banner and use **Reset demo data** to start over. Demo mode cannot activate in
-a production build. See [docs/demo-mode.md](docs/demo-mode.md).
+a production build.
 
 ## Testing
 
@@ -141,48 +118,38 @@ a production build. See [docs/demo-mode.md](docs/demo-mode.md).
 | Release validation | `node testing/release/check-release-readiness.mjs` / `node testing/release/smoke.mjs --build` |
 | CI | GitHub Actions: fast jobs on PR, heavy E2E/smoke on `main` or manual |
 
-The full matrix, what each layer proves, log locations and artifacts:
-[docs/testing.md](docs/testing.md).
+The CI workflow is `.github/workflows/ci.yml`. Logs and artifacts for the heavy suites are uploaded
+by that workflow.
 
 ## Deployment
 
-- Development workflows: [docs/development-workflows.md](docs/development-workflows.md).
-- Production (single Linux VM, Docker Compose, nginx, only 80/443 public):
-  [docs/production-deployment.md](docs/production-deployment.md).
-- Operations, backup/restore, Kafka/Redis recovery: [docs/runbook.md](docs/runbook.md).
+- Local/development Compose: `docker-compose.yml` with `.env` from `.env.example`.
+- Single-VM production overlay: `docker-compose.prod.yml` + `deploy/nginx/` with an external
+  `.env.prod` (template in `.env.prod.example`). Only nginx publishes ports 80/443.
+- Build one service image with `mvn -DskipTests package` and
+  `docker build -t mediflow/<service> backend/<service>`.
 
-## Documentation
+## Repository layout
 
-**[docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md)** is the authoritative project-level reference:
-architecture, services, data ownership, Kafka/outbox, security, workflows, setup, low-resource
-options, demo mode, testing, CI, Compose, production, limitations and roadmap.
-
-| Specialist reference | Contents |
+| Path | Contents |
 |---|---|
-| [getting-started.md](docs/getting-started.md) | Windows-first setup, env vars, seed data, common errors |
-| [development-workflows.md](docs/development-workflows.md) | Demo, infra-only, selected services, memory tips |
-| [demo-mode.md](docs/demo-mode.md) | Synthetic frontend mode and its safety guarantees |
-| [testing.md](docs/testing.md) | All verification layers, CI, artifacts |
-| [security.md](docs/security.md) | Auth, RBAC, ownership, revocation |
-| [api-design.md](docs/api-design.md) | REST contracts, lifecycle, conflicts, idempotency |
-| [database-design.md](docs/database-design.md) | Schema, constraints, migrations, local DB operations |
-| [kafka-events.md](docs/kafka-events.md) | Topics, outbox, consumer idempotency/DLQ |
-| [production-deployment.md](docs/production-deployment.md) | VM sizing, secrets, HTTPS, backups, rollback |
-| [runbook.md](docs/runbook.md) | Incidents, recovery, reconciliation SQL |
-| [coding-standards.md](docs/coding-standards.md) | Backend/frontend conventions |
+| `backend/` | Maven reactor: nine runnable services plus `common-library` and scaffolds |
+| `frontend/mediflow-ui/` | React + TypeScript SPA, demo mode and Playwright tests |
+| `testing/` | Cross-service E2E, release checks, smoke tests and Postman collection |
+| `deploy/` | nginx edge configuration and TLS templates |
+| `scripts/` | PowerShell helpers for infra, selected-service runs and lightweight checks |
+| `.github/` | CI workflow and Dependabot configuration |
 
 ## Known limitations
 
 - Reference/demo platform: **no approval for real patient data**; synthetic data only.
 - Single-VM production overlay is a single point of failure; no HA, registry/CD, automated backups,
   Prometheus/Grafana server, tracing or centralized logging.
-- No leave-approval workflow (a leave blocks bookings immediately); analytics ignores
-  `medical-record.updated.v1`; appointment/medical-record audit tables are not backfilled before M6.
+- No leave-approval workflow; analytics ignores `medical-record.updated.v1`; audit tables are not
+  backfilled before M6.
 - `lab-service`/`pharmacy-service` are scaffolds; no external payment provider, FHIR/HL7 or
   insurance-claims domain.
 - Spring Boot 3.5 / Spring Cloud 2025.0 are past OSS end-of-life; a Boot 4.x migration is planned.
-
-Full risks and roadmap: [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md#18-known-limitations-and-remaining-production-risks).
 
 ## Git
 
