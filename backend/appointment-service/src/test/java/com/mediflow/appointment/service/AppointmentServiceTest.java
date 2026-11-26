@@ -22,6 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 
@@ -189,6 +190,23 @@ class AppointmentServiceTest {
                 () -> appointmentService.createAppointment(request));
 
         assertTrue(conflict.getMessage().contains("patient already has an appointment"));
+        verify(eventPublisher, never()).publishCreated(any(Appointment.class));
+    }
+
+    @Test
+    void createAppointmentTranslatesConcurrentBookingDeadlockToConflict() {
+        // Two inserts that check the doctor and patient constraints in opposite order can deadlock
+        // (SQLSTATE 40P01). PostgreSQL aborts one transaction; the caller must see 409, not 500.
+        CreateAppointmentRequest request = request(LocalDateTime.now().plusDays(1), LocalDateTime.now().plusDays(1).plusHours(1));
+        when(appointmentRepository.hasOverlappingAppointment(any(), any(), any(), any())).thenReturn(false);
+        when(appointmentRepository.saveAndFlush(any(Appointment.class)))
+                .thenThrow(new CannotAcquireLockException("could not execute statement",
+                        new SQLException("deadlock detected", "40P01")));
+
+        ConflictException conflict = assertThrows(ConflictException.class,
+                () -> appointmentService.createAppointment(request));
+
+        assertTrue(conflict.getMessage().contains("please retry"));
         verify(eventPublisher, never()).publishCreated(any(Appointment.class));
     }
 

@@ -16,6 +16,7 @@ import com.mediflow.common.exception.ResourceNotFoundException;
 import com.mediflow.common.time.ClinicClock;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -61,6 +62,8 @@ public class AppointmentService {
             "The doctor already has an appointment that overlaps this time slot";
     private static final String PATIENT_SLOT_CONFLICT_MESSAGE =
             "The patient already has an appointment that overlaps this time slot";
+    private static final String CONCURRENT_BOOKING_CONFLICT_MESSAGE =
+            "Another booking for this slot was processed at the same time; please retry";
 
     private static final Set<AppointmentStatus> CONFIRMABLE = Set.of(AppointmentStatus.SCHEDULED);
     private static final Set<AppointmentStatus> STARTABLE = Set.of(AppointmentStatus.CONFIRMED);
@@ -285,10 +288,14 @@ public class AppointmentService {
     }
 
     /**
-     * Persists the appointment and maps an exclusion-constraint rejection to a 409.
+     * Persists the appointment and maps a concurrent slot rejection to a 409.
      *
-     * <p>Only a slot conflict is translated; any other integrity violation is rethrown unchanged so
-     * the shared handler keeps reporting it as a generic conflict.</p>
+     * <p>Two database outcomes mean "someone else won the race": an exclusion-constraint rejection
+     * (SQLSTATE {@code 23P01}) and a deadlock (SQLSTATE {@code 40P01}) when concurrent inserts
+     * check the doctor and patient constraints in opposite order. Both become a
+     * {@link ConflictException} so the client retries instead of seeing a 500. Any other integrity
+     * violation is rethrown unchanged so the shared handler keeps reporting it as a generic
+     * conflict.</p>
      */
     private Appointment saveAndTranslateSlotConflict(Appointment appointment) {
         try {
@@ -301,6 +308,10 @@ public class AppointmentService {
                 throw new ConflictException(message);
             }
             throw ex;
+        } catch (CannotAcquireLockException ex) {
+            log.debug("Concurrent booking deadlocked for appointment {}: {}",
+                    appointment.getAppointmentId(), ex.getMessage());
+            throw new ConflictException(CONCURRENT_BOOKING_CONFLICT_MESSAGE);
         }
     }
 
