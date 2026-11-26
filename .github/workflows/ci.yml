@@ -31,6 +31,20 @@ jobs:
           java-version: 21
           cache: maven
 
+      - name: Pin the Testcontainers Docker API version
+        # The hosted runner's Docker Engine rejects API versions below 1.40, while
+        # Testcontainers' shaded docker-java falls back to 1.32 when api.version is unset.
+        # Use the daemon's own API version so the Testcontainers-backed PostgreSQL/Redis
+        # tests run instead of being skipped as "no valid Docker environment".
+        run: |
+          api_version="$(docker version --format '{{.Server.APIVersion}}')"
+          if [ -z "$api_version" ]; then
+            echo "::error::Could not determine the Docker API version"
+            exit 1
+          fi
+          echo "Using Docker API version ${api_version}"
+          echo "api.version=${api_version}" >> ~/.docker-java.properties
+
       - name: Maven verify (full reactor)
         # -U forces Maven to re-check artifact metadata instead of trusting a
         # cached "absent" resolution marker in the restored ~/.m2 cache.
