@@ -4,6 +4,7 @@ import com.mediflow.notification.AbstractNotificationIntegrationTest;
 import com.mediflow.notification.entity.Notification;
 import com.mediflow.notification.entity.NotificationType;
 import com.mediflow.notification.repository.NotificationRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -29,6 +30,14 @@ class NotificationControllerIntegrationTest extends AbstractNotificationIntegrat
 
     @Autowired
     private NotificationRepository notificationRepository;
+
+    @BeforeEach
+    void isolateFromCommittedRows() {
+        // The idempotency suite shares this PostgreSQL container and commits notifications, while the
+        // admin-wide assertions below count every row. Deleting inside the test transaction keeps the
+        // counts deterministic; the rollback leaves the other suite's committed data untouched.
+        notificationRepository.deleteAll();
+    }
 
     @Test
     void listNotificationsScopedToPatient() throws Exception {
